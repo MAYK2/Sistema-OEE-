@@ -1,0 +1,579 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    /* Industrial Design Tweaks */
+    .op-header {
+        background-color: #34495e;
+        color: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 30px;
+    }
+
+    .status-banner {
+        padding: 20px;
+        border-radius: 12px;
+        color: white;
+        text-align: center;
+        font-weight: 800;
+        font-size: 2.5rem;
+        margin-bottom: 30px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: background-color 0.3s;
+    }
+
+    .op-stat-label {
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.7);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .btn-xxl {
+        padding: 40px 30px;
+        font-size: 1.8rem;
+        font-weight: 800;
+        border-radius: 20px;
+        width: 100%;
+        transition: all 0.2s;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 15px;
+    }
+
+    .btn-xxl:hover {
+        transform: translateY(-3px);
+        filter: brightness(1.1);
+    }
+
+    .counter-display {
+        font-size: 6rem;
+        font-weight: 900;
+        background: #fff;
+        border: 2px solid #e0e0e0;
+        border-radius: 15px;
+        padding: 30px;
+        text-align: center;
+        font-family: 'Courier New', monospace;
+        color: #2c3e50;
+    }
+</style>
+
+<div class="container-fluid mt-4">
+    <!-- Status Banner -->
+    <div id="main-status-banner" class="status-banner bg-secondary">
+        <i class="bi bi-circle-fill me-3"></i> CARGANDO ESTADO...
+    </div>
+
+    <!-- Header -->
+    <div class="row op-header mb-4 shadow">
+        <div class="col-md-3">
+            <div class="op-stat-label">ORDEN DE TRABAJO</div>
+            <div class="display-6">{{ order.ot_number }}</div>
+        </div>
+        <div class="col-md-5">
+            <div class="op-stat-label">CLIENTE</div>
+            <div class="display-6">{{ order.client.name }}</div>
+        </div>
+        <div class="col-md-4">
+            <div class="op-stat-label">PRODUCTO</div>
+            <div class="display-6">{{ order.product.name }}</div>
+        </div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h5>Progreso: <span class="text-muted">(Se actualizará al finalizar la orden)</span></h5>
+            <div class="progress" style="height: 30px;">
+                <div id="progress-bar" class="progress-bar progress-bar-striped bg-secondary" role="progressbar"
+                    style="width: 0%">0%</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Control Panel -->
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-dark text-white text-center">
+                    <h4>CONTROL DE LÍNEA</h4>
+                </div>
+                <div class="card-body d-flex flex-column justify-content-center gap-3 p-5">
+
+                    <button id="btn-start" class="btn btn-success btn-xxl shadow" onclick="changeStatus('start')">
+                        <i class="bi bi-play-circle-fill"></i> INICIAR
+                    </button>
+
+                    <!-- Changeover Button (Only Visible when Pending) -->
+                    <button id="btn-changeover" class="btn btn-info btn-xxl shadow text-white"
+                        onclick="confirmChangeover()" style="display: none;">
+                        <i class="bi bi-tools"></i> CAMBIO DE PASO
+                    </button>
+
+                    <button id="btn-resume" class="btn btn-success btn-xxl shadow" onclick="changeStatus('start')"
+                        style="display: none;">
+                        <i class="bi bi-play-circle-fill"></i> CONTINUAR
+                    </button>
+
+                    <!-- Stop Changeover Button -->
+                    <button id="btn-stop-changeover" class="btn btn-warning btn-xxl shadow" onclick="stopChangeover()"
+                        style="display: none;">
+                        <i class="bi bi-stop-circle-fill"></i> FINALIZAR CAMBIO
+                    </button>
+
+                    <button id="btn-pause" class="btn btn-danger btn-xxl shadow" onclick="changeStatus('pause')"
+                        style="display: none;">
+                        <i class="bi bi-pause-circle-fill"></i> PAUSAR
+                    </button>
+
+                    <!-- Finish Button Triggers Manual Entry Modal -->
+                    <button id="btn-finish" class="btn btn-secondary btn-lg py-4 mt-3" onclick="requestFinish()">
+                        <i class="bi bi-check-circle-fill"></i> FINALIZAR ORDEN
+                    </button>
+
+                    <div class="text-center mt-3 text-muted">
+                        <small>Estado actual del sistema</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Counter Panel -->
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-dark text-white text-center">
+                    <h4>PRODUCCIÓN (Pendiente)</h4>
+                </div>
+                <div class="card-body p-4 text-center">
+                    <!-- TARGET DISPLAY -->
+                    <div class="mb-4 text-center border-bottom pb-4">
+                        <small class="text-uppercase fw-bold text-success">OBJETIVO (PLAN)</small>
+                        <div class="display-3 fw-bold text-success">
+                            <i class="bi bi-bullseye"></i> {{ order.planned_quantity }}
+                        </div>
+                    </div>
+
+                    <div class="mb-2 text-muted">Total Final</div>
+                    <div class="counter-display mb-4 text-dark" id="count-display">
+                        --
+                    </div>
+
+                    <!-- STOPWATCH CARD -->
+                    <div class="alert alert-dark p-3 mb-4">
+                        <small class="text-uppercase fw-bold text-muted">TIEMPO RODANDO</small>
+                        <div id="stopwatch" class="display-3 fw-bold font-monospace">00:00:00</div>
+                    </div>
+
+                    <!-- PAUSE TIMER CARD (Hidden by default) -->
+                    <div id="pause-timer-card" class="alert alert-danger p-3 mb-4" style="display: none;">
+                        <small class="text-uppercase fw-bold text-danger">TIEMPO EN PAUSA</small>
+                        <div id="pause-timer" class="display-3 fw-bold font-monospace text-danger">00:00:00</div>
+                    </div>
+
+                    <!-- CHANGEOVER TIMER CARD (Hidden by default) -->
+                    <div id="changeover-timer-card" class="alert alert-info p-3 mb-4" style="display: none;">
+                        <small class="text-uppercase fw-bold text-info">TIEMPO CAMBIO DE PASO</small>
+                        <div id="changeover-timer" class="display-3 fw-bold font-monospace text-info">00:00:00</div>
+                    </div>
+
+                    <div class="mt-4 text-muted border-top pt-3">
+                        <i class="bi bi-pencil-square"></i> El conteo de productos se ingresará manualmente al presionar
+                        "Finalizar Orden".
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODALS -->
+
+<!-- Start Confirmation Modal -->
+<div class="modal fade" id="startModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">Confirmar Inicio</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body fs-5 text-center py-4">
+                ¿Está listo para iniciar la producción?<br>
+                El cronómetro de tiempo productivo comenzará a correr.
+
+                <div class="mt-4 text-start">
+                    <label class="form-label fw-bold">Cantidad de Operarios:</label>
+                    <input type="number" id="operatorCountInput" class="form-control form-control-lg" value="1" min="1">
+                </div>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success btn-lg" onclick="confirmStart()">Confirmar Inicio</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pause Reason Modal -->
+<div class="modal fade" id="pauseModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Justificar Parada</h5>
+            </div>
+            <div class="modal-body">
+                <div id="pause-reason-buttons">
+                    <p class="fs-5 text-center">Seleccione el motivo de la parada:</p>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-outline-danger btn-lg text-start"
+                            onclick="setReason('Falla de Máquina')">⚠️
+                            Falla de Máquina</button>
+                        <button class="btn btn-outline-danger btn-lg text-start"
+                            onclick="setReason('Falta de Insumos')">📦
+                            Falta de Insumos</button>
+                        <button class="btn btn-outline-danger btn-lg text-start"
+                            onclick="setReason('Descanso / Almuerzo')">☕ Descanso / Almuerzo</button>
+                        <button class="btn btn-outline-danger btn-lg text-start" onclick="setReason('Limpieza')">🧹
+                            Limpieza</button>
+                        <button class="btn btn-outline-secondary btn-lg text-start" onclick="showOtherInput()">❓
+                            Otro</button>
+                    </div>
+                </div>
+
+                <div id="other-reason-container" style="display: none;">
+                    <p class="fs-5 text-center">Especifique el motivo:</p>
+                    <input type="text" id="otherReasonInput" class="form-control form-control-lg mb-3"
+                        placeholder="Ej: Corte de Luz">
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-danger btn-lg" onclick="confirmCustomReason()">Confirmar Motivo</button>
+                        <button class="btn btn-secondary" onclick="resetPauseModal()">Volver</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Finish / Quantity Modal -->
+<div class="modal fade" id="finishModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title">Finalizar Orden</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center py-4">
+                <h4>¡Orden Completada!</h4>
+                <p class="mb-4">Por favor, ingrese la cantidad total producida para cerrar el registro:</p>
+
+                <div class="alert alert-info shadow-sm mb-4">
+                    <i class="bi bi-info-circle-fill"></i> Se recomienda haber alcanzado el objetivo de:
+                    <strong class="fs-5 text-decoration-underline">{{ order.planned_quantity }}</strong> unidades.
+                </div>
+
+                <div class="mb-3 text-start">
+                    <label class="form-label fw-bold">Cantidad Total Producida:</label>
+                    <input type="number" id="finalQuantityInput" class="form-control form-control-lg text-center fs-2"
+                        placeholder="Ej: 500" min="0">
+                </div>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary btn-lg" onclick="confirmFinish()">Guardar y
+                    Finalizar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const orderId = {{ order.id }};
+    let currentStatus = "{{ order.status.name }}";
+
+    // Server-side elapsed seconds (Integer)
+    let elapsedSeconds = {{ initial_elapsed_seconds }};
+
+    // Pause / Changeover handling
+    const pauseStartIso = "{{ pause_start_iso if pause_start_iso else '' }}";
+    const isChangeover = {{ 'true' if is_changeover else 'false' }};
+
+    let pauseSeconds = 0;
+
+    // Flag to know if we should increment logic
+    let isRunning = (currentStatus === 'EXECUTION');
+
+    let timerInterval = null;
+    let pauseInterval = null;
+
+    // --- NEW: Freeze Timers UX ---
+    function pauseTimers() {
+        if (timerInterval) clearInterval(timerInterval);
+        if (pauseInterval) clearInterval(pauseInterval);
+    }
+
+    function restoreTimers() {
+        // Just calling initUI() again will respect 'currentStatus' and current seconds
+        // and restart the tickers if applicable.
+        initUI();
+    }
+
+    function initUI() {
+        // Calculate initial pause/changeover duration if applicable
+        if (currentStatus === 'PENDING' && pauseStartIso) {
+            const startTime = new Date(pauseStartIso).getTime();
+            const now = new Date().getTime(); // Browser time
+            pauseSeconds = Math.floor((now - startTime) / 1000);
+            if (pauseSeconds < 0) pauseSeconds = 0;
+        }
+
+        toggleButtons();
+        startStopwatch();
+        startPauseTimer();
+    }
+
+    function startStopwatch() {
+        if (timerInterval) clearInterval(timerInterval);
+        updateStopwatchDisplay();
+
+        if (isRunning) {
+            timerInterval = setInterval(() => {
+                elapsedSeconds++;
+                updateStopwatchDisplay();
+            }, 1000);
+        } else {
+            if (currentStatus === 'PENDING' && elapsedSeconds > 0) {
+                document.getElementById('stopwatch').classList.add('text-muted');
+            }
+        }
+    }
+
+    function startPauseTimer() {
+        if (pauseInterval) clearInterval(pauseInterval);
+
+        // Show Timer if Paused OR Changeover
+        if (currentStatus === 'PENDING' && pauseStartIso) {
+
+            if (isChangeover) {
+                document.getElementById('changeover-timer-card').style.display = 'block';
+                document.getElementById('pause-timer-card').style.display = 'none';
+                updateChangeoverDisplay();
+            } else {
+                document.getElementById('pause-timer-card').style.display = 'block';
+                document.getElementById('changeover-timer-card').style.display = 'none';
+                updatePauseDisplay();
+            }
+
+            pauseInterval = setInterval(() => {
+                pauseSeconds++;
+                if (isChangeover) updateChangeoverDisplay();
+                else updatePauseDisplay();
+            }, 1000);
+        } else {
+            document.getElementById('pause-timer-card').style.display = 'none';
+            document.getElementById('changeover-timer-card').style.display = 'none';
+        }
+    }
+
+    function updateStopwatchDisplay() {
+        const display = document.getElementById('stopwatch');
+        display.innerText = formatTime(elapsedSeconds);
+    }
+
+    function updatePauseDisplay() {
+        document.getElementById('pause-timer').innerText = formatTime(pauseSeconds);
+    }
+
+    function updateChangeoverDisplay() {
+        document.getElementById('changeover-timer').innerText = formatTime(pauseSeconds);
+    }
+
+    function formatTime(totalSeconds) {
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const fmt = (n) => n.toString().padStart(2, '0');
+        return `${fmt(hours)}:${fmt(minutes)}:${fmt(seconds)}`;
+    }
+
+    function toggleButtons() {
+        const btnStart = document.getElementById('btn-start');
+        const btnChangeover = document.getElementById('btn-changeover');
+        const btnResume = document.getElementById('btn-resume');
+        const btnStopChangeover = document.getElementById('btn-stop-changeover');
+
+        const btnPause = document.getElementById('btn-pause');
+        const btnFinish = document.getElementById('btn-finish');
+        const banner = document.getElementById('main-status-banner');
+
+        // Reset visibility
+        btnStart.style.display = 'none';
+        btnChangeover.style.display = 'none';
+        btnResume.style.display = 'none';
+        btnStopChangeover.style.display = 'none';
+        btnPause.style.display = 'none';
+        btnFinish.disabled = false;
+
+        if (currentStatus === 'EXECUTION') {
+            btnPause.style.display = 'block';
+            banner.className = 'status-banner bg-success';
+            banner.innerHTML = '<i class="bi bi-gear-fill me-3 spin-slow"></i> PRODUCCIÓN EN CURSO';
+            document.getElementById('stopwatch').classList.remove('text-muted');
+        } else if (currentStatus === 'PENDING') {
+            if (pauseStartIso) {
+                // IT IS PAUSED or CHANGEOVER
+                if (isChangeover) {
+                    btnStopChangeover.style.display = 'block';
+                    banner.className = 'status-banner bg-info text-dark';
+                    banner.innerHTML = '<i class="bi bi-tools me-3"></i> CAMBIO DE PASO';
+                } else {
+                    btnResume.style.display = 'block';
+                    banner.className = 'status-banner bg-danger';
+                    banner.innerHTML = '<i class="bi bi-stop-circle-fill me-3"></i> LÍNEA DETENIDA';
+                }
+            } else {
+                // FRESH PENDING (Not paused)
+                btnStart.style.display = 'block';
+                btnChangeover.style.display = 'block';
+
+                banner.className = 'status-banner bg-secondary';
+                banner.innerHTML = '<i class="bi bi-check-circle me-3"></i> LISTO PARA INICIAR';
+            }
+        } else if (currentStatus === 'FINISHED') {
+            btnFinish.disabled = true;
+            banner.className = 'status-banner bg-dark';
+            banner.innerHTML = '<i class="bi bi-flag-fill me-3"></i> ORDEN FINALIZADA';
+            document.getElementById('stopwatch').innerText = "FINALIZADO";
+            if (timerInterval) clearInterval(timerInterval);
+            if (pauseInterval) clearInterval(pauseInterval);
+        }
+    }
+
+    // --- CHANGEOVER ACTIONS ---
+    function confirmChangeover() {
+        if (confirm("¿Desea iniciar un Cambio de Paso? Esto detendrá la producción y contará el tiempo de preparación.")) {
+            fetch(`/api/orders/${orderId}/changeover/start`, { method: 'POST' })
+                .then(() => window.location.reload());
+        }
+    }
+
+    function stopChangeover() {
+        if (confirm("¿Ha finalizado el Cambio de Paso?")) {
+            fetch(`/api/orders/${orderId}/changeover/stop`, { method: 'POST' })
+                .then(() => window.location.reload());
+        }
+    }
+
+    function changeStatus(action) {
+        if (action === 'start') {
+            pauseTimers(); // Freeze visuals
+            const startModal = new bootstrap.Modal(document.getElementById('startModal'));
+            document.getElementById('startModal').addEventListener('hidden.bs.modal', restoreTimers, { once: true });
+            startModal.show();
+        } else if (action === 'pause') {
+            pauseTimers(); // Freeze visuals
+            // Reset modal state
+            resetPauseModal();
+            const pauseModal = new bootstrap.Modal(document.getElementById('pauseModal'));
+            document.getElementById('pauseModal').addEventListener('hidden.bs.modal', restoreTimers, { once: true });
+            pauseModal.show();
+        }
+    }
+
+    function confirmStart() {
+        const opCount = document.getElementById('operatorCountInput').value;
+        const modal = bootstrap.Modal.getInstance(document.getElementById('startModal'));
+        modal.hide();
+
+        sendAction('start', { operators_count: opCount })
+            .then(() => window.location.reload());
+    }
+
+    // --- PAUSE REASON LOGIC ---
+    function showOtherInput() {
+        document.getElementById('pause-reason-buttons').style.display = 'none';
+        document.getElementById('other-reason-container').style.display = 'block';
+    }
+
+    function resetPauseModal() {
+        document.getElementById('pause-reason-buttons').style.display = 'block';
+        document.getElementById('other-reason-container').style.display = 'none';
+        document.getElementById('otherReasonInput').value = '';
+    }
+
+    function confirmCustomReason() {
+        const reasonStr = document.getElementById('otherReasonInput').value;
+        if (!reasonStr.trim()) {
+            alert('Por favor especifique el motivo');
+            return;
+        }
+        // Send 'Otro' as the main category reason, and the text as 'comment'
+        setReason('Otro', reasonStr);
+    }
+
+    function setReason(reason, comment = null) {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('pauseModal'));
+        modal.hide();
+
+        const payload = { reason: reason };
+        if (comment) {
+            payload.comment = comment;
+        }
+
+        sendAction('pause', payload)
+            .then(() => window.location.reload());
+    }
+
+    function requestFinish() {
+        const modal = new bootstrap.Modal(document.getElementById('finishModal'));
+        modal.show();
+    }
+
+    function confirmFinish() {
+        const finalQty = document.getElementById('finalQuantityInput').value;
+
+        if (!finalQty || parseInt(finalQty) < 0) {
+            alert("Por favor ingrese una cantidad válida.");
+            return;
+        }
+
+        if (!confirm(`¿Confirma que se produjeron ${finalQty} unidades? La orden se cerrará.`)) return;
+
+        const modal = bootstrap.Modal.getInstance(document.getElementById('finishModal'));
+        modal.hide();
+
+        fetch(`/api/orders/${orderId}/finish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ produced_quantity: finalQty })
+        })
+            .then(res => res.json())
+            .then(data => {
+                // Redirect to Reports or Home
+                window.location.href = "{{ url_for('views.reports') }}";
+            });
+    }
+
+    function sendAction(action, payload = {}) {
+        return fetch(`/api/orders/${orderId}/${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                }
+            })
+            .catch(err => console.error(err));
+    }
+
+    initUI();
+</script>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4"><i class="bi bi-clock-history"></i> Historial de Órdenes</h1>
+
+    <div class="card shadow">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Fecha Fin</th>
+                            <th>N° OT</th>
+                            <th>Cliente</th>
+                            <th>Producto</th>
+                            <th class="text-center">Producido</th>
+                            <th class="text-end">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if orders %}
+                        {% for order in orders %}
+                        <tr>
+                            <td>{{ order.end_time.strftime('%d/%m/%Y %H:%M') if order.end_time else '-' }}
+                            </td>
+                            <td class="fw-bold">{{ order.ot_number }}</td>
+                            <td>{{ order.client.name }}</td>
+                            <td>{{ order.product.name }}</td>
+                            <td class="text-center">{{ order.total_produced }}</td>
+                            <td class="text-end">
+                                <a href="{{ url_for('views.report_detail', id=order.id) }}"
+                                    class="btn btn-primary btn-sm">
+                                    <i class="bi bi-eye"></i> Ver Detalle
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-muted">No hay órdenes finalizadas aún.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

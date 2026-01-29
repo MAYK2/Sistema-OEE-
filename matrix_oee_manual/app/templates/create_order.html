@@ -1,0 +1,265 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-9 col-lg-8">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white">
+                <h3 class="card-title mb-0">Nueva Orden de Producción (Carga Masiva)</h3>
+            </div>
+            <div class="card-body">
+                <form id="orderForm">
+
+                    <!-- Sección CLIENTE -->
+                    <div class="mb-4">
+                        <label class="form-label fs-5 fw-bold">1. Cliente</label>
+
+                        <div class="mb-3">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="client_mode" id="mode_existing"
+                                    value="existing" checked onclick="toggleClientMode()">
+                                <label class="form-check-label" for="mode_existing">Cliente Existente</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="client_mode" id="mode_new"
+                                    value="new" onclick="toggleClientMode()">
+                                <label class="form-check-label" for="mode_new">Cliente Nuevo</label>
+                            </div>
+                        </div>
+
+                        <!-- Cliente Existente -->
+                        <div id="section_existing_client">
+                            <select class="form-select" id="existing_client_id">
+                                <option value="">Buscar cliente...</option>
+                                {% for client in clients %}
+                                <option value="{{ client.id }}">{{ client.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Cliente Nuevo -->
+                        <div id="section_new_client" style="display: none;">
+                            <div class="row">
+                                <div class="col-md-7">
+                                    <input type="text" class="form-control mb-2" id="new_client_name"
+                                        placeholder="Nombre completo / Empresa">
+                                </div>
+                                <div class="col-md-5">
+                                    <input type="text" class="form-control" id="new_client_phone"
+                                        placeholder="Teléfono (Opcional)">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Sección PRODUCTOS (CARRITO) -->
+                    <div class="mb-4">
+                        <label class="form-label fs-5 fw-bold">2. Agregar Productos</label>
+                        <div class="card bg-light border-0 mb-3">
+                            <div class="card-body">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-6">
+                                        <label class="form-label sensitive-label">Producto</label>
+                                        <select class="form-select" id="product_select">
+                                            <option value="">Seleccione...</option>
+                                            {% for product in products %}
+                                            <option value="{{ product.id }}">{{ product.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label sensitive-label">Cantidad</label>
+                                        <input type="number" class="form-control" id="quantity_input" min="1"
+                                            placeholder="Ej: 1000">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <button type="button" class="btn btn-secondary w-100" onclick="addItem()">
+                                            Agregar
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tabla de Ítems -->
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm" id="order-items-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Producto</th>
+                                        <th style="width: 150px;">Cantidad</th>
+                                        <th style="width: 50px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="itemsBody">
+                                    <!-- Rows added via JS -->
+                                    <tr id="emptyRow">
+                                        <td colspan="3" class="text-center text-muted fst-italic py-3">
+                                            No hay productos agregados a la lista.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Sección FECHAS -->
+                    <div class="mb-4">
+                        <label class="form-label fs-5 fw-bold">3. Planificación</label>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label class="form-label">Fecha Inicio (Ahora)</label>
+                                <input type="datetime-local" class="form-control" value="{{ today_date }}" readonly>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="estimated_finish" class="form-label">Fin Estimado (Opcional)</label>
+                                <input type="datetime-local" class="form-control" id="estimated_finish">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-grid gap-2 mt-5">
+                        <button type="button" class="btn btn-success btn-lg" onclick="submitOrders()">Crear
+                            Órdenes</button>
+                        <a href="{{ url_for('views.index') }}" class="btn btn-outline-secondary">Cancelar</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let serverItems = [];
+
+    function toggleClientMode() {
+        const mode = document.querySelector('input[name="client_mode"]:checked').value;
+        const sectionExisting = document.getElementById('section_existing_client');
+        const sectionNew = document.getElementById('section_new_client');
+
+        if (mode === 'existing') {
+            sectionExisting.style.display = 'block';
+            sectionNew.style.display = 'none';
+        } else {
+            sectionExisting.style.display = 'none';
+            sectionNew.style.display = 'block';
+        }
+    }
+
+    function addItem() {
+        const productSelect = document.getElementById('product_select');
+        const quantityInput = document.getElementById('quantity_input');
+
+        const productId = productSelect.value;
+        const productName = productSelect.options[productSelect.selectedIndex].text;
+        const quantity = parseInt(quantityInput.value);
+
+        if (!productId || !quantity || quantity < 1) {
+            alert("Por favor seleccione un producto y una cantidad válida.");
+            return;
+        }
+
+        // Add to array
+        serverItems.push({
+            product_id: productId,
+            product_name: productName,
+            quantity: quantity
+        });
+
+        // Reset inputs
+        productSelect.value = "";
+        quantityInput.value = "";
+
+        renderTable();
+    }
+
+    function removeItem(index) {
+        serverItems.splice(index, 1);
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('itemsBody');
+        tbody.innerHTML = '';
+
+        if (serverItems.length === 0) {
+            tbody.innerHTML = `
+                <tr id="emptyRow">
+                    <td colspan="3" class="text-center text-muted fst-italic py-3">
+                        No hay productos agregados a la lista.
+                    </td>
+                </tr>`;
+            return;
+        }
+
+        serverItems.forEach((item, index) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="align-middle">${item.product_name}</td>
+                <td class="align-middle">${item.quantity}</td>
+                <td class="text-center">
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">&times;</button>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    function submitOrders() {
+        if (serverItems.length === 0) {
+            alert("Agregue al menos un producto a la lista.");
+            return;
+        }
+
+        const clientMode = document.querySelector('input[name="client_mode"]:checked').value;
+        let payload = {
+            client_mode: clientMode,
+            items: serverItems,
+            estimated_finish: document.getElementById('estimated_finish').value
+        };
+
+        if (clientMode === 'existing') {
+            const clientId = document.getElementById('existing_client_id').value;
+            if (!clientId) {
+                alert("Seleccione un cliente existente.");
+                return;
+            }
+            payload.existing_client_id = clientId;
+        } else {
+            const name = document.getElementById('new_client_name').value;
+            if (!name) {
+                alert("Ingrese el nombre del nuevo cliente.");
+                return;
+            }
+            payload.new_client_name = name;
+            payload.new_client_phone = document.getElementById('new_client_phone').value;
+        }
+
+        // Send JSON
+        fetch("{{ url_for('views.create_order') }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        })
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                }
+                throw new Error('Error en el servidor');
+            })
+            .then(data => {
+                // Success
+                window.location.href = "{{ url_for('views.index') }}";
+            })
+            .catch(error => {
+                alert("Error al crear las órdenes: " + error.message);
+            });
+    }
+</script>
+{% endblock %}

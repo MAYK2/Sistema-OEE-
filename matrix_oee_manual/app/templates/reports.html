@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4"><i class="bi bi-bar-chart-fill"></i> Reporte Gerencial de Producción</h1>
+
+    <!-- FILTERS -->
+    <div class="card shadow mb-4">
+        <div class="card-body">
+            <form action="{{ url_for('views.reports') }}" method="GET" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Fecha Inicio</label>
+                    <input type="date" name="start_date" class="form-control"
+                        value="{{ request.args.get('start_date', '') }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Fecha Fin</label>
+                    <input type="date" name="end_date" class="form-control"
+                        value="{{ request.args.get('end_date', '') }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Cliente</label>
+                    <select name="client_id" class="form-select">
+                        <option value="">Todos los Clientes</option>
+                        {% for client in clients %}
+                        <option value="{{ client.id }}" {% if request.args.get('client_id')|int==client.id %}selected{%
+                            endif %}>
+                            {{ client.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-filter"></i> Filtrar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SUMMARY TABLE -->
+    <div class="card shadow">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0">Resumen por Producto</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle text-center">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="text-start">Producto</th>
+                            <th>N° Órdenes</th>
+                            <th>Total Producido</th>
+                            <th>Tiempo Total Ejecución</th>
+                            <th>Tiempo Total Paradas</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if report_data %}
+                        {% for row in report_data %}
+                        <tr>
+                            <td class="text-start fw-bold">{{ row.product_name }}</td>
+                            <td>{{ row.orders_count }}</td>
+                            <td>{{ row.total_produced }}</td>
+                            <td>{{ row.run_time_minutes }} min</td>
+                            <td>{{ row.downtime_minutes }} min</td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="text-muted py-4">No se encontraron datos para el rango seleccionado.
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

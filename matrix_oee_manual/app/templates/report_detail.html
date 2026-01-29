@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4 mb-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1><i class="bi bi-file-earmark-bar-graph"></i> Reporte de Orden: {{ order.ot_number }}</h1>
+        <a href="{{ url_for('views.history') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Volver al Historial
+        </a>
+    </div>
+
+    <!-- SECCIÓN 1: ENCABEZADO -->
+    <div class="card shadow mb-4">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0">Información General</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    <small class="text-muted fw-bold">CLIENTE</small>
+                    <div class="fs-5">{{ order.client.name }}</div>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted fw-bold">PRODUCTO</small>
+                    <div class="fs-5">{{ order.product.name }}</div>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted fw-bold">FECHA INICIO</small>
+                    <div class="fs-5">{{ order.start_time.strftime('%d/%m/%Y %H:%M') if order.start_time else
+                        '-' }}</div>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted fw-bold">FECHA FIN</small>
+                    <div class="fs-5">{{ order.end_time.strftime('%d/%m/%Y %H:%M') if order.end_time else '-'
+                        }}</div>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-md-3">
+                    <small class="text-muted fw-bold">OPERARIOS</small>
+                    <div class="fs-5">{{ order.operator_count if order.operator_count else 1 }}</div>
+                </div>
+                <div class="col-md-3">
+                    <small class="text-muted fw-bold">PRODUCIDO / PLANEADO</small>
+                    <div class="fs-5">{{ order.total_produced }} / {{ order.planned_quantity }} <span
+                            class="badge bg-success ms-2">{{ order.compliance }}%</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SECCIÓN 2: KPIs GRANDES -->
+    <div class="row text-center mb-4">
+        <div class="col-md-12">
+            <div class="card bg-info text-white shadow h-100">
+                <div class="card-body py-4">
+                    <h5>DISPONIBILIDAD</h5>
+                    <h1 class="display-3 fw-bold">{{ order.availability }}%</h1>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- SECCIÓN 3: TIEMPOS -->
+        <div class="col-lg-4 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">Resumen de Tiempos</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Tiempo Total
+                        <span class="badge bg-secondary rounded-pill">{{ order.total_time_seconds // 60 }} min</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Tiempo Productivo (Run Time)
+                        <span class="badge bg-success rounded-pill">{{ order.run_time_seconds // 60 }} min</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Tiempo de Paradas (Downtime)
+                        <span class="badge bg-danger rounded-pill">{{ order.total_downtime_seconds_calc // 60 }}
+                            min</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- SECCIÓN 4: LISTA DE PARADAS -->
+        <div class="col-lg-8 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">Historial de Actividad (Producción y Paradas)</h5>
+                </div>
+                <div class="card-body">
+                    {% if timeline %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Tipo</th>
+                                    <th>Hora Inicio</th>
+                                    <th>Hora Fin</th>
+                                    <th>Detalle / Motivo</th>
+                                    <th class="text-end">Duración</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for event in timeline %}
+                                <tr class="
+                                    {% if event.type == 'production' %}table-success border-start border-success border-5
+                                    {% elif event.color == 'info' %}table-info border-start border-info border-5
+                                    {% else %}table-danger border-start border-danger border-5{% endif %}
+                                ">
+                                    <td class="text-center">
+                                        <i class="bi {{ event.icon }} fs-5 text-{{ event.color }}"></i>
+                                    </td>
+                                    <td>{{ event.start_time.strftime('%H:%M:%S') }}</td>
+                                    <td>
+                                        {{ event.end_time.strftime('%H:%M:%S') if event.end_time else 'En curso...' }}
+                                    </td>
+                                    <td>
+                                        <strong>{{ event.reason }}</strong>
+                                        {% if event.comment %}
+                                        <div class="text-muted small mt-1">
+                                            <i class="bi bi-chat-dots"></i> {{ event.comment }}
+                                        </div>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end fw-bold">
+                                        {{ event.duration_seconds // 3600 }}h {{ (event.duration_seconds % 3600) // 60
+                                        }}m {{ event.duration_seconds % 60 }}s
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center my-4">Sin actividad registrada.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

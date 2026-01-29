@@ -1,0 +1,653 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1><i class="bi bi-speedometer2"></i> Tablero de Producción</h1>
+        <div class="text-muted">
+            Actualizado: <span id="current-time"></span>
+        </div>
+    </div>
+
+    <!-- ROW 0: KEY METRICS (OEE GAUGE) AND TIMELINE -->
+    <div class="row mb-5">
+        <!-- OEE GAUGE -->
+        <div class="col-md-4 mb-3">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4 text-center">
+                    <h5 class="fw-bold text-secondary text-uppercase fs-6">
+                        Disponibilidad de Máquina (%)
+                        <span data-bs-toggle="tooltip" data-bs-placement="top"
+                            title="Porcentaje del tiempo que la máquina estuvo produciendo respecto al tiempo total disponible.">
+                            <i class="bi bi-info-circle-fill text-muted ms-1"
+                                style="font-size: 0.9em; cursor: help;"></i>
+                        </span>
+                    </h5>
+                </div>
+                <div class="card-body d-flex justify-content-center align-items-center position-relative">
+                    <canvas id="oeeGaugeChart" style="max-height: 200px;"></canvas>
+                    <div class="position-absolute top-50 start-50 translate-middle mt-4 text-center">
+                        <h2
+                            class="fw-bold {{ 'text-success' if stats.oee_percent >= 80 else 'text-warning' if stats.oee_percent >= 60 else 'text-danger' }} mb-0">
+                            {{ stats.oee_percent }}%
+                        </h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TIMELINE -->
+        <div class="col-md-8 mb-3">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-secondary text-uppercase fs-6">Línea de Tiempo ({{ date_names.day }})</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="timelineChart"></canvas>
+                    {% if not stats.timeline %}
+                    <p class="text-muted text-center mt-5">Sin actividad registrada hoy.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROW 1: TODAY -->
+    <div class="card shadow mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h4 class="mb-0"><i class="bi bi-calendar-day"></i> Producción de Hoy ({{ date_names.day }})</h4>
+        </div>
+        <div class="card-body">
+            {% if stats.day %}
+            <div class="row text-center">
+                {% for product, count in stats.day.items() %}
+                <div class="col-md-4 mb-2">
+                    <div class="p-3 border rounded bg-light">
+                        <h5 class="text-secondary">{{ product }}</h5>
+                        <h2 class="fw-bold text-primary">{{ count }} <small class="fs-6 text-muted">unid.</small></h2>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted text-center pt-2">No hubo producción hoy (aún).</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ROW 2: WEEK -->
+    <div class="card shadow mb-4 border-success">
+        <div class="card-header bg-success text-white">
+            <h4 class="mb-0"><i class="bi bi-calendar-week"></i> Esta Semana</h4>
+        </div>
+        <div class="card-body">
+            {% if stats.week %}
+            <div class="row text-center">
+                {% for product, count in stats.week.items() %}
+                <div class="col-md-4 mb-2">
+                    <div class="p-3 border rounded bg-light">
+                        <h5 class="text-secondary">{{ product }}</h5>
+                        <h2 class="fw-bold text-success">{{ count }}</h2>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted text-center pt-2">Sin datos esta semana.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ROW 3: MONTH -->
+    <div class="card shadow mb-4 border-warning">
+        <div class="card-header bg-warning text-dark">
+            <h4 class="mb-0"><i class="bi bi-calendar-month"></i> Este Mes ({{ date_names.month }})</h4>
+        </div>
+        <div class="card-body">
+            {% if stats.month %}
+            <div class="row text-center">
+                {% for product, count in stats.month.items() %}
+                <div class="col-md-4 mb-2">
+                    <div class="p-3 border rounded bg-light">
+                        <h5 class="text-secondary">{{ product }}</h5>
+                        <h2 class="fw-bold text-dark">{{ count }}</h2>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted text-center pt-2">Sin datos este mes.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ANALYTICS ROW: PRODUCT AVERAGES -->
+    <div class="row mb-5">
+        <h3 class="mb-3 text-secondary border-bottom pb-2">Analítica de Producción (Estimación)</h3>
+
+        <!-- Total Liters Summary Card -->
+        <div class="col-12 mb-4">
+            <div class="card shadow border-0 bg-primary text-white">
+                <div class="card-body p-4 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-white-50 text-uppercase mb-1">Litros Totales Estimados (30 días)</h5>
+                        <div class="display-5 fw-bold">{{ total_liters_30d }} L</div>
+                        <small class="text-white-50"><i class="bi bi-info-circle"></i> Sifones: 1L, Bidones:
+                            10L/20L</small>
+                    </div>
+                    <i class="bi bi-water display-1 text-white-50"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Monthly Target Progress Card -->
+        <div class="col-12 mb-5">
+            <div class="card shadow border-0">
+                <div class="card-header bg-white border-0 pt-4 px-4">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="fw-bold text-dark text-uppercase mb-0"><i class="bi bi-crosshair"></i> Objetivos
+                            Mensuales (Producción)</h5>
+                        <span
+                            class="badge rounded-pill {% if target_data.status == 'En Camino' %}bg-success{% else %}bg-warning text-dark{% endif %}">
+                            {{ target_data.status }}
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body px-4 pb-4">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="fw-bold fs-5">{{ target_data.current }} u</span>
+                        <span class="text-muted">Meta: {{ target_data.target }} u</span>
+                    </div>
+                    <div class="progress" style="height: 25px; border-radius: 12px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated {% if target_data.percentage >= 100 %}bg-success{% elif target_data.percentage >= 50 %}bg-info{% else %}bg-warning{% endif %}"
+                            role="progressbar" style="width: {{ target_data.percentage }}%">
+                            {{ target_data.percentage }}%
+                        </div>
+                    </div>
+                    <div class="mt-2 text-muted small">
+                        <i class="bi bi-graph-up-arrow"></i> Progreso actual vs Objetivo definido por la empresa.
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% if product_analytics %}
+        {% for item in product_analytics %}
+        <div class="col-md-4 mb-4">
+            <div class="card shadow border-0 h-100 analytics-card">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h5 class="fw-bold text-dark mb-0">
+                            {% if 'Sif' in item.name or 'Soda' in item.name %}
+                            <i class="bi bi-droplet-fill text-primary me-2"></i>
+                            {% else %}
+                            <i class="bi bi-box-seam-fill text-success me-2"></i>
+                            {% endif %}
+                            {{ item.name }}
+                        </h5>
+                        <span class="badge bg-light text-dark border">Últimos 30 días</span>
+                    </div>
+
+                    <div class="row g-0 text-center">
+                        <div class="col-4 border-end">
+                            <small class="text-uppercase text-muted fw-bold" style="font-size: 0.7rem;">Diario</small>
+                            <div class="h4 fw-bold text-primary mt-1 mb-0">{{ item.daily }}</div>
+                            <small class="text-muted">u/día</small>
+                        </div>
+                        <div class="col-4 border-end">
+                            <small class="text-uppercase text-muted fw-bold" style="font-size: 0.7rem;">Semanal</small>
+                            <div class="h4 fw-bold text-success mt-1 mb-0">{{ item.weekly }}</div>
+                            <small class="text-muted">u/sem</small>
+                        </div>
+                        <div class="col-4">
+                            <small class="text-uppercase text-muted fw-bold" style="font-size: 0.7rem;">Mensual</small>
+                            <div class="h4 fw-bold text-dark mt-1 mb-0">{{ item.monthly }}</div>
+                            <small class="text-muted">u/mes</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="col-12">
+            <div class="alert alert-light border shadow-sm text-center py-4">
+                <i class="bi bi-bar-chart me-2"></i> Aún no hay suficientes datos para calcular promedios (se requieren
+                30 días).
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- CHARTS ROW 1: PRODUCTION -->
+    <div class="row mb-4">
+        <h3 class="mb-3 text-secondary border-bottom pb-2">Producción por Producto</h3>
+        <!-- WEEKLY CHART -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-secondary text-uppercase fs-6"><i class="bi bi-pie-chart-fill"></i> Semana
+                    </h5>
+                </div>
+                <div class="card-body d-flex justify-content-center align-items-center"
+                    style="position: relative; height: 300px;">
+                    <canvas id="weekChart"></canvas>
+                    {% if not stats.week %}
+                    <div class="position-absolute text-muted">Sin datos</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- MONTHLY CHART -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-secondary text-uppercase fs-6"><i class="bi bi-pie-chart-fill"></i> Mes</h5>
+                </div>
+                <div class="card-body d-flex justify-content-center align-items-center"
+                    style="position: relative; height: 300px;">
+                    <canvas id="monthChart"></canvas>
+                    {% if not stats.month %}
+                    <div class="position-absolute text-muted">Sin datos</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CHARTS ROW 2: DOWNTIME PARETO -->
+    <div class="row mb-5">
+        <h3 class="mb-3 text-secondary border-bottom pb-2">Análisis de Paradas (Mes Actual)</h3>
+
+        <!-- PARETO CHART -->
+        <div class="col-md-8 mb-4">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-dark"><i class="bi bi-bar-chart-fill"></i> Principales Motivos (Pareto)</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="paretoChart"></canvas>
+                    {% if not stats.pareto.data %}
+                    <p class="text-muted text-center pt-5">Sin datos de paradas.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- REASONS DOUGHNUT (Existing) -->
+        <div class="col-md-4 mb-4">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-danger"><i class="bi bi-pie-chart-fill"></i> Distribución %</h5>
+                </div>
+                <div class="card-body d-flex justify-content-center align-items-center"
+                    style="position: relative; height: 300px;">
+                    <canvas id="downtimeChart"></canvas>
+                    {% if not stats.downtime_month %}
+                    <div class="position-absolute text-muted">Sin paradas registradas</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CHARTS ROW 3: TIME EFFICIENCY -->
+    <div class="row mb-5">
+        <h3 class="mb-3 text-secondary border-bottom pb-2">Eficiencia de Tiempos (Ejecución vs Paradas)</h3>
+
+        <!-- WEEKLY TIME CHART -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-secondary text-uppercase fs-6"><i class="bi bi-clock-history"></i> Semana
+                        Actual</h5>
+                </div>
+                <div class="card-body d-flex justify-content-center align-items-center"
+                    style="position: relative; height: 300px;">
+                    <canvas id="weekTimeChart"></canvas>
+                    {% if stats.time_week['T. Ejecución'] == 0 and stats.time_week['T. Cambio de Paso'] == 0 and
+                    stats.time_week['T. Paradas'] == 0 %}
+                    <div class="position-absolute text-muted">Sin datos de tiempo</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- MONTHLY TIME CHART -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow h-100 border-0">
+                <div class="card-header bg-transparent border-0 pt-4 px-4">
+                    <h5 class="fw-bold text-secondary text-uppercase fs-6"><i class="bi bi-clock-history"></i> Mes
+                        Actual</h5>
+                </div>
+                <div class="card-body d-flex justify-content-center align-items-center"
+                    style="position: relative; height: 300px;">
+                    <canvas id="monthTimeChart"></canvas>
+                    {% if stats.time_month['T. Ejecución'] == 0 and stats.time_month['T. Cambio de Paso'] == 0 and
+                    stats.time_month['T. Paradas'] == 0 %}
+                    <div class="position-absolute text-muted">Sin datos de tiempo</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- CHART.JS CDN (INCLUDING ADAPTER FOR TIME SCALE) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script
+    src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+<script>
+    document.getElementById('current-time').innerText = new Date().toLocaleTimeString();
+
+    // Initialize Bootstrap Tooltips (Wait for DOM/Bootstrap to load)
+    document.addEventListener('DOMContentLoaded', function () {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+    });
+
+    // Chart Configuration
+    // Chart Configuration
+    const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    usePointStyle: true,
+                    padding: 20,
+                    font: { size: 12 }
+                }
+            },
+            tooltip: {
+                callbacks: {
+                    label: function (context) {
+                        return context.label + ': ' + context.parsed;
+                    }
+                }
+            }
+        },
+        scales: {
+            x: {
+                // Default to simple axis, but if type is 'time', these override:
+                ticks: {
+                    autoSkip: true,
+                    maxRotation: 0
+                }
+            }
+        },
+        layout: {
+            padding: 20
+        }
+    };
+
+    // Premium Color Palette
+    const premiumColors = [
+        '#2c3e50', '#1abc9c', '#9b59b6', '#e74c3c', '#34495e', '#f1c40f',
+        '#e67e22', '#2ecc71', '#3498db', '#95a5a6'
+    ];
+
+    // Efficiency Colors: Green (Execution), Blue (Changeover), Red (Stops)
+    const efficiencyColors = ['#27ae60', '#2980b9', '#c0392b'];
+
+    // --- PRODUCTION DATA ---
+    const weekLabels = {{ stats.week.keys() | list | tojson }};
+    const weekData = {{ stats.week.values() | list | tojson }};
+
+    const monthLabels = {{ stats.month.keys() | list | tojson }};
+    const monthData = {{ stats.month.values() | list | tojson }};
+
+    // --- DOWNTIME DATA ---
+    const downtimeLabels = {{ stats.downtime_month.keys() | list | tojson }};
+    const downtimeData = {{ stats.downtime_month.values() | list | tojson }};
+
+    // --- TIME EFFICIENCY DATA ---
+    const timeWeekLabels = {{ stats.time_week.keys() | list | tojson }};
+    const timeWeekData = {{ stats.time_week.values() | list | tojson }};
+
+    const timeMonthLabels = {{ stats.time_month.keys() | list | tojson }};
+    const timeMonthData = {{ stats.time_month.values() | list | tojson }};
+
+
+    // --- ADVANCED ANALYTICS DATA ---
+    const timelineEvents = {{ stats.timeline | tojson }};
+    const paretoData = {{ stats.pareto | tojson }};
+    const oeePercent = {{ stats.oee_percent | tojson }};
+
+    // RENDER OEE GAUGE
+    // 180-degree Doughnut
+    new Chart(document.getElementById('oeeGaugeChart'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Disponibilidad', 'Pérdida'],
+            datasets: [{
+                data: [oeePercent, 100 - oeePercent],
+                backgroundColor: [
+                    oeePercent >= 80 ? '#27ae60' : (oeePercent >= 60 ? '#f1c40f' : '#c0392b'),
+                    '#ecf0f1'
+                ],
+                borderWidth: 0,
+                sentiment: 'good'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            rotation: -90,
+            circumference: 180,
+            cutout: '80%',
+            plugins: {
+                tooltip: { enabled: false },
+                legend: { display: false }
+            }
+        }
+    });
+
+    // RENDER TIMELINE CHART
+    if (timelineEvents.length > 0) {
+        new Chart(document.getElementById('timelineChart'), {
+            type: 'bar',
+            data: {
+                labels: ['Línea 1'], // Single Y-axis lane
+                datasets: timelineEvents.map(evt => ({
+                    label: evt.label,
+                    data: [{ x: evt.x, y: evt.y }],
+                    backgroundColor: evt.fillColor,
+                    barPercentage: 0.8,
+                    categoryPercentage: 1.0,
+                    borderColor: 'rgba(0,0,0,0.1)',
+                    borderWidth: 1
+                }))
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false, // IMPORTANT for timeline height
+                scales: {
+                    x: {
+                        position: 'top',
+                        type: 'time',
+                        time: {
+                            unit: 'hour',
+                            displayFormats: { hour: 'HH:mm' }
+                        },
+                        min: new Date().setHours(0, 0, 0, 0), // Start of today
+                        max: new Date().setHours(23, 59, 59, 999) // End of today
+                    },
+                    y: {
+                        display: false // Hide 'Línea 1' label if redundant
+                    }
+                },
+                plugins: {
+                    legend: { display: false }, // Too many items for legend
+                    tooltip: {
+                        callbacks: {
+                            label: function (ctx) {
+                                // "Producción: 10:00 - 12:00"
+                                const start = new Date(ctx.raw.x[0]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                const end = new Date(ctx.raw.x[1]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                return ctx.dataset.label + ': ' + start + ' - ' + end;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // RENDER PARETO CHART
+    if (paretoData.labels && paretoData.labels.length > 0) {
+        new Chart(document.getElementById('paretoChart'), {
+            type: 'bar',
+            data: {
+                labels: paretoData.labels,
+                datasets: [{
+                    label: 'Minutos Perdidos',
+                    data: paretoData.data,
+                    backgroundColor: '#e74c3c',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function (ctx) {
+                                return ctx.formattedValue + ' min';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Minutos' }
+                    }
+                }
+            }
+        });
+    }
+
+
+    // RENDER PRODUCTION CHARTS
+    if (weekLabels.length > 0) {
+        new Chart(document.getElementById('weekChart'), {
+            type: 'doughnut',
+            data: {
+                labels: weekLabels,
+                datasets: [{ data: weekData, backgroundColor: premiumColors, borderWidth: 0 }]
+            },
+            options: chartOptions
+        });
+    }
+
+    if (monthLabels.length > 0) {
+        new Chart(document.getElementById('monthChart'), {
+            type: 'doughnut',
+            data: {
+                labels: monthLabels,
+                datasets: [{ data: monthData, backgroundColor: premiumColors, borderWidth: 0 }]
+            },
+            options: chartOptions
+        });
+    }
+
+    // RENDER DOWNTIME CHART (Reasons)
+    if (downtimeLabels.length > 0) {
+        new Chart(document.getElementById('downtimeChart'), {
+            type: 'doughnut', // or 'pie'
+            data: {
+                labels: downtimeLabels,
+                datasets: [{
+                    data: downtimeData,
+                    backgroundColor: ['#e74c3c', '#e67e22', '#f1c40f', '#9b59b6', '#34495e', '#95a5a6'], // Warm/Alert colors
+                    borderWidth: 0,
+                    hoverOffset: 15
+                }]
+            },
+            options: {
+                ...chartOptions,
+                plugins: {
+                    ...chartOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function (context) {
+                                return context.label + ': ' + context.parsed + '%';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Dynamic Time Formatting Helper
+    function formatTimeLabel(minutes) {
+        if (minutes <= 60) {
+            return Math.round(minutes) + ' min';
+        } else if (minutes <= 6000) { // Up to 100 hours
+            return (minutes / 60).toFixed(2) + ' hrs';
+        } else { // Over 100 hours
+            return Math.floor(minutes / 60) + ' hrs';
+        }
+    }
+
+    // Chart Options with Dynamic Time Tooltip
+    // We clone default options and override tooltip
+    const timeChartOptions = {
+        ...chartOptions,
+        plugins: {
+            ...chartOptions.plugins,
+            tooltip: {
+                callbacks: {
+                    label: function (context) {
+                        return context.label + ': ' + formatTimeLabel(context.parsed);
+                    }
+                }
+            }
+        }
+    };
+
+    // RENDER TIME EFFICIENCY CHARTS
+    // Week
+    const hasWeekData = timeWeekData.some(val => val > 0);
+    if (hasWeekData) {
+        new Chart(document.getElementById('weekTimeChart'), {
+            type: 'doughnut',
+            data: {
+                labels: timeWeekLabels,
+                datasets: [{
+                    data: timeWeekData,
+                    backgroundColor: efficiencyColors,
+                    borderWidth: 0
+                }]
+            },
+            options: timeChartOptions
+        });
+    }
+
+    // Month
+    const hasMonthData = timeMonthData.some(val => val > 0);
+    if (hasMonthData) {
+        new Chart(document.getElementById('monthTimeChart'), {
+            type: 'doughnut',
+            data: {
+                labels: timeMonthLabels,
+                datasets: [{
+                    data: timeMonthData,
+                    backgroundColor: efficiencyColors,
+                    borderWidth: 0
+                }]
+            },
+            options: timeChartOptions
+        });
+    }
+</script>
+{% endblock %}
