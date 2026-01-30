@@ -2,6 +2,7 @@ from app import create_app, db
 from app.models.line import Line
 from app.models.product import Product
 from app.models.client import Client
+from app.models.user import User
 
 def seed_db():
     app = create_app()
@@ -53,6 +54,16 @@ def seed_db():
              client = Client(id=1, name="Grammar", phone="555-0199")
              db.session.add(client)
              print(f"   + Client Created: Grammar")
+
+        # 4. Ensure Admin User Exists
+        admin_user = User.query.filter_by(username='admin').first()
+        if not admin_user:
+            admin_user = User(username='admin')
+            admin_user.set_password('admin')
+            db.session.add(admin_user)
+            print("   + Admin User Created: admin/admin")
+        else:
+            print("   . Admin User Exists")
 
         db.session.commit()
         print("✅ Database Seeded Successfully!")

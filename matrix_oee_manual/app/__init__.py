@@ -1,6 +1,6 @@
 from flask import Flask
 from config import Config
-from app.extensions import db
+from app.extensions import db, login_manager
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -8,6 +8,8 @@ def create_app(config_class=Config):
 
     # Initialize extensions
     db.init_app(app)
+    login_manager.init_app(app)
+    login_manager.login_view = 'views.login'
 
     # Register Blueprints
     from app.api.orders import orders_bp
@@ -27,5 +29,10 @@ def create_app(config_class=Config):
     from app.models.work_order import WorkOrder
     from app.models.downtime import DowntimeEvent
     from app.models.downtime import DowntimeEvent
+    from app.models.user import User
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        return User.query.get(int(user_id))
 
     return app

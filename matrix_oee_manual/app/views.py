@@ -1,15 +1,19 @@
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify, flash
+from flask_login import login_user, logout_user, login_required, current_user
 from datetime import datetime, timedelta, date
 from app.extensions import db
 from app.models.work_order import WorkOrder, WorkOrderStatus
 from app.models.product import Product
 from app.models.client import Client
 from app.models.downtime import DowntimeEvent
+from app.models.user import User
 
 views_bp = Blueprint('views', __name__)
 
 @views_bp.route('/')
 def index():
+    if not current_user.is_authenticated:
+        return redirect(url_for('views.create_order'))
     # Solo buscamos órdenes que el operario pueda ver para trabajar
     # PENDING: Creadas pero no iniciadas
     # EXECUTION: Órdenes que ya están corriendo (cronómetro activo)
@@ -34,7 +38,8 @@ def create_order():
             elif client_mode == 'new':
                 new_client_name = data.get('new_client_name')
                 new_client_phone = data.get('new_client_phone')
-                new_client = Client(name=new_client_name, phone=new_client_phone)
+                new_client_email = data.get('new_client_email')
+                new_client = Client(name=new_client_name, phone=new_client_phone, email=new_client_email)
                 db.session.add(new_client)
                 db.session.commit()
                 client_id = new_client.id
@@ -81,7 +86,33 @@ def create_order():
     today_date = datetime.now().strftime('%Y-%m-%dT%H:%M')
     return render_template('create_order.html', products=products, clients=clients, today_date=today_date)
 
+@views_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('views.index'))
+    
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = User.query.filter_by(username=username).first()
+        
+        if user and user.check_password(password):
+            login_user(user)
+            return redirect(url_for('views.index'))
+        else:
+            error = "Usuario o contraseña incorrectos"
+            
+    return render_template('login.html', error=error)
+
+@views_bp.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('views.login'))
+
 @views_bp.route('/operate/<int:order_id>')
+@login_required
 def operate(order_id):
     # FORCE FRESH SESSION to ensure we see the latest downtimes/status changes
     db.session.remove()
@@ -154,6 +185,7 @@ def operate(order_id):
 # --- API ENDPOINTS ---
 
 @views_bp.route('/api/orders/<int:id>/start', methods=['POST'])
+@login_required
 def start_order(id):
     # FORCE FRESH SESSION to avoid stale reads (Isolation Level issues)
     # Ensure any previous transaction state is cleared so we see updates from other requests (like verify/pause)
@@ -207,6 +239,7 @@ def start_order(id):
     return jsonify({"error": "Invalid status transition"}), 400
 
 @views_bp.route('/api/orders/<int:id>/pause', methods=['POST'])
+@login_required
 def pause_order(id):
     order = WorkOrder.query.get_or_404(id)
     data = request.get_json()
@@ -229,6 +262,7 @@ def pause_order(id):
     return jsonify({"error": "Order must be in EXECUTION to pause"}), 400
 
 @views_bp.route('/api/orders/<int:id>/finish', methods=['POST'])
+@login_required
 def finish_order(id):
     order = WorkOrder.query.get_or_404(id)
     data = request.get_json() or {}
@@ -252,6 +286,7 @@ def finish_order(id):
 
 # --- CHANGEOVER ENDPOINTS ---
 @views_bp.route('/api/orders/<int:id>/changeover/start', methods=['POST'])
+@login_required
 def start_changeover(id):
     # Force Session Refresh
     db.session.remove()
@@ -279,6 +314,7 @@ def start_changeover(id):
     return jsonify({"message": "Changeover started", "start_time": event.start_time.isoformat()})
 
 @views_bp.route('/api/orders/<int:id>/changeover/stop', methods=['POST'])
+@login_required
 def stop_changeover(id):
     # Force Session Refresh
     db.session.remove()
@@ -302,6 +338,7 @@ def stop_changeover(id):
 # --- REPORTES ---
 
 @views_bp.route('/history')
+@login_required
 def history():
     orders = WorkOrder.query.filter_by(status=WorkOrderStatus.FINISHED)\
                             .order_by(WorkOrder.end_time.desc())\
@@ -309,6 +346,7 @@ def history():
     return render_template('history.html', orders=orders)
 
 @views_bp.route('/report/<int:id>')
+@login_required
 def report_detail(id):
     order = WorkOrder.query.get_or_404(id)
     
@@ -372,6 +410,7 @@ def report_detail(id):
     return render_template('report_detail.html', order=order, timeline=timeline)
 
 @views_bp.route('/reports')
+@login_required
 def reports():
     # Filtros
     start_date_str = request.args.get('start_date')
@@ -402,8 +441,12 @@ def reports():
     clients = Client.query.all()
 
     # Lógica de Agregación para Reportes
-    report_data = {} 
+    final_report = get_report_data_helper(orders)
+    
+    return render_template('reports.html', report_data=final_report, clients=clients)
 
+def get_report_data_helper(orders):
+    report_data = {} 
     for order in orders:
         pid = order.product_id
         if pid not in report_data:
@@ -417,7 +460,6 @@ def reports():
         
         # Usamos propiedades seguras del modelo o cálculo manual si falla
         run_time = getattr(order, 'run_time_seconds', 0)
-        # Calcular downtime manualmente por seguridad
         dt_seconds = sum(d.duration_seconds for d in order.downtime_events if d.duration_seconds)
         
         report_data[pid]['orders_count'] += 1
@@ -425,7 +467,6 @@ def reports():
         report_data[pid]['total_run_time'] += run_time
         report_data[pid]['total_downtime'] += dt_seconds
 
-    # Crear lista final
     final_report = []
     for pid, data in report_data.items():
         final_report.append({
@@ -435,12 +476,129 @@ def reports():
             'run_time_minutes': round(data['total_run_time'] / 60, 1),
             'downtime_minutes': round(data['total_downtime'] / 60, 1)
         })
+    return final_report
 
-    return render_template('reports.html', report_data=final_report, clients=clients)
+@views_bp.route('/reports/export')
+@login_required
+def export_reports():
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+    from flask import send_file
+
+    # --- Reusing Filter Logic (Duplicated slightly for standalone nature, or extract to helper if used 3+ times) ---
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    client_id = request.args.get('client_id')
+
+    query = WorkOrder.query.filter_by(status=WorkOrderStatus.FINISHED)
+
+    if start_date_str:
+        try:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            query = query.filter(WorkOrder.end_time >= start_date)
+        except ValueError:
+            pass
+    
+    if end_date_str:
+        try:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+            query = query.filter(WorkOrder.end_time <= end_date)
+        except ValueError:
+            pass
+
+    if client_id:
+        query = query.filter_by(client_id=int(client_id))
+
+    orders = query.all()
+    data = get_report_data_helper(orders)
+
+    # --- Create Excel ---
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Reporte Matrix OEE"
+
+    # Add Period Info Row
+    period_text = "Periodo: Historial Completo"
+    if start_date_str and end_date_str:
+        period_text = f"Periodo: {start_date_str} al {end_date_str}"
+    elif start_date_str:
+        period_text = f"Periodo: Desde {start_date_str}"
+    elif end_date_str:
+        period_text = f"Periodo: Hasta {end_date_str}"
+
+    ws.append([period_text])
+    ws.merge_cells('A1:E1') # Merge across 5 columns
+    
+    title_cell = ws['A1']
+    title_cell.font = Font(size=12, bold=True, italic=True)
+    title_cell.alignment = Alignment(horizontal="center")
+
+    # Headers (Now on Row 2)
+    headers = ["Producto", "N° Órdenes", "Total Producido", "Tiempo Ejecución (min)", "Tiempo Paradas (min)"]
+    ws.append(headers)
+
+    # Style Header
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1a1a2e", end_color="1a1a2e", fill_type="solid") # Dark Blue
+    
+    for cell in ws[2]: # Row 2 is headers now
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    # Data
+    for row in data:
+        ws.append([
+            row['product_name'],
+            row['orders_count'],
+            row['total_produced'],
+            row['run_time_minutes'],
+            row['downtime_minutes']
+        ])
+
+    # Auto-adjust columns
+    for col in ws.columns:
+        max_length = 0
+        # Use Row 2 (Header) to get column letter to avoid MergedCell in Row 1
+        # col[0] is Row 1, col[1] is Row 2
+        try:
+            column = get_column_letter(col[1].column)
+        except:
+             column = get_column_letter(col[0].column)
+
+        for cell in col:
+            # Skip Row 1 (Title) so it doesn't mess up widths for columns A-E
+            if cell.row == 1:
+                continue
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column].width = adjusted_width
+
+    # Generate Stream
+    excel_stream = BytesIO()
+    wb.save(excel_stream)
+    excel_stream.seek(0)
+    
+    filename = f"Reporte_Produccion_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+
+    return send_file(
+        excel_stream,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 from app.services.time_sync import get_network_time
 
 @views_bp.route('/dashboard')
+@login_required
 def dashboard():
     # Use Network Time for accurate Dashboard Date/Day
     now_network = get_network_time()
