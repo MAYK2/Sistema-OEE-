@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="text-dark fw-bold"><i class="bi bi-gear-fill me-2 text-primary"></i>Configuración de Línea</h2>
+            <p class="text-muted">Defina el horario de trabajo activo para calcular el OEE correctamente.</p>
+        </div>
+    </div>
+
+    <div id="linesContainer" class="row">
+        <!-- Lines will be injected here via JS -->
+    </div>
+
+    <!-- Template for Line Card (Hidden) -->
+    <template id="lineCardTemplate">
+        <div class="col-md-6 mb-4">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div
+                    class="card-header bg-white border-bottom-0 pt-4 pb-0 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title fw-bold text-primary mb-0"><i class="bi bi-robot me-2"></i><span
+                            class="line-name-title">Línea</span></h5>
+                    <span class="badge bg-light text-dark border">ID: <span class="line-id-display"></span></span>
+                </div>
+                <div class="card-body">
+                    <form class="line-config-form">
+                        <input type="hidden" name="id" class="line-id">
+
+                        <div class="mb-3">
+                            <label class="form-label text-secondary fw-semibold">Nombre de Línea</label>
+                            <input type="text" class="form-control bg-light line-name-input" name="name" required>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="mb-3">
+                                    <label class="form-label text-secondary fw-semibold">Inicio Turno</label>
+                                    <input type="time" class="form-control border-primary line-shift-start"
+                                        name="shift_start" required>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="mb-3">
+                                    <label class="form-label text-secondary fw-semibold">Fin Turno</label>
+                                    <input type="time" class="form-control border-primary line-shift-end"
+                                        name="shift_end" required>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 d-grid">
+                            <button type="submit" class="btn btn-outline-primary rounded-pill">
+                                <i class="bi bi-save me-2"></i>Guardar Configuración
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        const container = document.getElementById('linesContainer');
+        const template = document.getElementById('lineCardTemplate');
+
+        // 1. Fetch current config
+        try {
+            const res = await fetch('/api/catalogs/lines');
+            const lines = await res.json();
+
+            if (lines.length === 0) {
+                container.innerHTML = '<div class="col-12"><div class="alert alert-warning">No hay líneas configuradas.</div></div>';
+                return;
+            }
+
+            lines.forEach(line => {
+                const clone = template.content.cloneNode(true);
+
+                // Populate Data
+                clone.querySelector('.line-name-title').textContent = line.name;
+                clone.querySelector('.line-id-display').textContent = line.id;
+                clone.querySelector('.line-id').value = line.id;
+                clone.querySelector('.line-name-input').value = line.name;
+                clone.querySelector('.line-shift-start').value = line.shift_start || "08:00";
+                clone.querySelector('.line-shift-end').value = line.shift_end || "17:00";
+
+                // Attach Event Listener to form
+                const form = clone.querySelector('.line-config-form');
+                form.addEventListener('submit', (e) => handleSave(e, line.id));
+
+                container.appendChild(clone);
+            });
+
+        } catch (e) {
+            console.error("Error fetching lines", e);
+            container.innerHTML = `<div class="alert alert-danger">Error cargando configuración: ${e.message}</div>`;
+        }
+
+        // 2. Handle Save
+        async function handleSave(e, id) {
+            e.preventDefault();
+            const form = e.target;
+            const btn = form.querySelector('button');
+            const originalText = btn.innerHTML;
+
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Guardando...';
+            btn.disabled = true;
+
+            const formData = new FormData(form);
+            const data = {
+                name: formData.get('name'),
+                shift_start: formData.get('shift_start'),
+                shift_end: formData.get('shift_end')
+            };
+
+            try {
+                const res = await fetch(`/api/catalogs/lines/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (res.ok) {
+                    // visual success feedback
+                    btn.classList.remove('btn-outline-primary');
+                    btn.classList.add('btn-success', 'text-white');
+                    btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardado';
+
+                    setTimeout(() => {
+                        btn.classList.remove('btn-success', 'text-white');
+                        btn.classList.add('btn-outline-primary');
+                        btn.innerHTML = originalText;
+                        btn.disabled = false;
+                    }, 2000);
+                } else {
+                    const err = await res.json();
+                    alert('Error al guardar: ' + (err.error || 'Desconocido'));
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error de conexión');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+    });
+</script>
+{% endblock %}

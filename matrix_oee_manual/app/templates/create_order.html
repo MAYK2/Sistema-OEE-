@@ -2,23 +2,47 @@
 
 {% block content %}
 <style>
-    /* Tablet Mode: Lock scroll for this specific page */
-    html,
-    body {
-        overflow: hidden;
+    /* Desktop Mode: Lock scroll for app-like experience */
+    @media (min-width: 992px) {
+
+        html,
+        body {
+            overflow: hidden;
+        }
+
+        .h-lg-100 {
+            height: 100% !important;
+        }
+
+        .overflow-lg-auto {
+            overflow: auto !important;
+        }
+    }
+
+    /* Tablet/Mobile: Allow native scrolling */
+    @media (max-width: 991.98px) {
+        body {
+            overflow-y: auto;
+            /* Ensure footer doesn't overlap content */
+            padding-bottom: 80px;
+        }
+
+        .h-100-mobile-auto {
+            height: auto !important;
+        }
     }
 </style>
-<div class="row h-100 g-0">
-    <div class="col-12 h-100">
-        <div class="card shadow h-100 border-0">
+<div class="row h-lg-100 g-0">
+    <div class="col-12 h-lg-100">
+        <div class="card shadow h-lg-100 border-0">
             <div class="card-header bg-primary text-white py-2">
                 <h4 class="card-title mb-0 fs-5"><i class="bi bi-cpu-fill me-2"></i>Nueva Orden de Producción</h4>
             </div>
             <div class="card-body p-0">
-                <form id="orderForm" class="h-100 d-flex flex-column">
-                    <div class="row g-0 h-100">
+                <form id="orderForm" class="h-lg-100 d-flex flex-column">
+                    <div class="row g-0 h-lg-100">
                         <!-- Left Panel: Client & Planning -->
-                        <div class="col-lg-4 col-md-5 bg-light border-end p-3 d-flex flex-column overflow-auto">
+                        <div class="col-lg-4 col-12 bg-light border-end p-3 d-flex flex-column overflow-lg-auto">
                             <!-- 1. Cliente -->
                             <div class="mb-3">
                                 <h6 class="fw-bold text-primary mb-2"><i class="bi bi-people-fill me-2"></i>Cliente</h6>
@@ -64,8 +88,8 @@
                                         value="{{ today_date }}" readonly>
                                 </div>
                                 <div>
-                                    <label for="estimated_finish" class="form-label small text-muted mb-0">Fin
-                                        (Opcional)</label>
+                                    <label for="estimated_finish" class="form-label small text-muted mb-0">Fecha
+                                        Estimada de Entrega</label>
                                     <input type="datetime-local" class="form-control form-control-sm"
                                         id="estimated_finish">
                                 </div>
@@ -80,7 +104,7 @@
                         </div>
 
                         <!-- Right Panel: Products -->
-                        <div class="col-lg-8 col-md-7 p-3 d-flex flex-column h-100">
+                        <div class="col-lg-8 col-12 p-3 d-flex flex-column h-lg-100">
                             <!-- Helper / Add Product -->
                             <div class="mb-3">
                                 <h6 class="fw-bold text-primary mb-2"><i class="bi bi-cart-plus-fill me-2"></i>Productos
@@ -168,7 +192,11 @@
         const quantity = parseInt(quantityInput.value);
 
         if (!productId || !quantity || quantity < 1) {
-            alert("Por favor seleccione un producto y una cantidad válida.");
+            Swal.fire({
+                icon: 'info',
+                title: 'Datos incompletos',
+                text: 'Por favor seleccione un producto y una cantidad válida.'
+            });
             return;
         }
 
@@ -222,7 +250,11 @@
 
     function submitOrders() {
         if (serverItems.length === 0) {
-            alert("Agregue al menos un producto a la lista.");
+            Swal.fire({
+                icon: 'warning',
+                title: 'Lista vacía',
+                text: 'Agregue al menos un producto a la lista.'
+            });
             return;
         }
 
@@ -236,26 +268,34 @@
         if (clientMode === 'existing') {
             const clientId = document.getElementById('existing_client_id').value;
             if (!clientId) {
-                alert("Seleccione un cliente existente.");
+                Swal.fire({ icon: 'warning', title: 'Falta Cliente', text: 'Seleccione un cliente existente.' });
                 return;
             }
             payload.existing_client_id = clientId;
         } else {
             const name = document.getElementById('new_client_name').value;
             if (!name) {
-                alert("Ingrese el nombre del nuevo cliente.");
+                Swal.fire({ icon: 'warning', title: 'Falta Cliente', text: 'Ingrese el nombre del nuevo cliente.' });
                 return;
             }
             payload.new_client_name = name;
             payload.new_client_phone = document.getElementById('new_client_phone').value;
         }
 
+        // Show Loading
+        Swal.fire({
+            title: 'Creando Órdenes...',
+            text: 'Por favor espere',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+
         // Send JSON
         fetch("{{ url_for('views.create_order') }}", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         })
             .then(response => {
@@ -265,11 +305,23 @@
                 throw new Error('Error en el servidor');
             })
             .then(data => {
-                // Success
-                window.location.href = "{{ url_for('views.index') }}";
+                // Success Alert with Timer
+                Swal.fire({
+                    icon: 'success',
+                    title: '¡Órdenes Creadas!',
+                    text: 'Se han generado las órdenes de producción correctamente.',
+                    timer: 2500,
+                    showConfirmButton: false
+                }).then(() => {
+                    window.location.href = "{{ url_for('views.index') }}";
+                });
             })
             .catch(error => {
-                alert("Error al crear las órdenes: " + error.message);
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: "No se pudieron crear las órdenes: " + error.message
+                });
             });
     }
 </script>

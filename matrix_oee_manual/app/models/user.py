@@ -8,6 +8,16 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
+    # Roles: 'admin', 'operator'
+    role = db.Column(db.String(20), nullable=False, default='operator')
+
+    @property
+    def is_admin(self):
+        return self.role == 'admin'
+
+    @property
+    def is_operator(self):
+        return self.role == 'operator'
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -16,4 +26,4 @@ class User(UserMixin, db.Model):
         return check_password_hash(self.password_hash, password)
 
     def __repr__(self):
-        return f'<User {self.username}>'
+        return f'<User {self.username} ({self.role})>'

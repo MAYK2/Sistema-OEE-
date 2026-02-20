@@ -7,8 +7,20 @@ from app.models.product import Product
 from app.models.client import Client
 from app.models.downtime import DowntimeEvent
 from app.models.user import User
+from app.models.line import Line
 
 views_bp = Blueprint('views', __name__)
+
+from functools import wraps
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            flash("⛔ Acceso denegado: Se requieren permisos de Administrador.", "danger")
+            return redirect(url_for('views.index'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 @views_bp.route('/')
 def index():
@@ -22,6 +34,11 @@ def index():
     ).all()
     
     return render_template('index.html', orders=orders)
+
+@views_bp.route('/tutorial')
+@login_required
+def tutorial():
+    return render_template('tutorial.html')
 
 @views_bp.route('/orders/new', methods=['GET', 'POST'])
 def create_order():
@@ -57,10 +74,23 @@ def create_order():
             items = data.get('items', [])
             created_count = 0
             
+            # Optimization: Fetch last OT number ONCE for the batch
+            year = datetime.now().year
+            last_order = WorkOrder.query.filter(WorkOrder.ot_number.like(f'OT-{year}-%'))\
+                                        .order_by(WorkOrder.id.desc())\
+                                        .first()
+            
+            last_seq = 0
+            if last_order:
+                try:
+                    last_seq = int(last_order.ot_number.split('-')[-1])
+                except ValueError:
+                    pass
+
             for item in items:
-                count = WorkOrder.query.count()
-                year = datetime.now().year
-                ot_number = f"OT-{year}-{count + 1 + created_count:04d}" # Ajuste para que no repita si creas varias
+                # Increment sequence for each item in the batch
+                new_seq = last_seq + 1 + created_count
+                ot_number = f"OT-{year}-{new_seq:04d}"
                 
                 planned_quantity = item.get('quantity')
                 
@@ -337,8 +367,15 @@ def stop_changeover(id):
 
 # --- REPORTES ---
 
+@views_bp.route('/config/lines')
+@login_required
+@admin_required
+def config_lines():
+    return render_template('config_lines.html')
+
 @views_bp.route('/history')
 @login_required
+@admin_required
 def history():
     orders = WorkOrder.query.filter_by(status=WorkOrderStatus.FINISHED)\
                             .order_by(WorkOrder.end_time.desc())\
@@ -347,6 +384,7 @@ def history():
 
 @views_bp.route('/report/<int:id>')
 @login_required
+@admin_required
 def report_detail(id):
     order = WorkOrder.query.get_or_404(id)
     
@@ -411,6 +449,7 @@ def report_detail(id):
 
 @views_bp.route('/reports')
 @login_required
+@admin_required
 def reports():
     # Filtros
     start_date_str = request.args.get('start_date')
@@ -480,6 +519,7 @@ def get_report_data_helper(orders):
 
 @views_bp.route('/reports/export')
 @login_required
+@admin_required
 def export_reports():
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -599,6 +639,7 @@ from app.services.time_sync import get_network_time
 
 @views_bp.route('/dashboard')
 @login_required
+@admin_required
 def dashboard():
     # Use Network Time for accurate Dashboard Date/Day
     now_network = get_network_time()
@@ -608,11 +649,18 @@ def dashboard():
     start_week = start_day - timedelta(days=today.weekday())
     start_month = start_day.replace(day=1)
     
-    # Helper to aggregate production by product
-    def get_stats(start_date):
-        orders = WorkOrder.query.filter(
+    # 1. Fetch All Lines
+    lines = Line.query.all()
+    if not lines:
+        pass 
+
+    # --- HELPER FUNCTIONS (Refactored for Line Context) ---
+
+    def get_stats(start_date, line_id):
+        orders = WorkOrder.query.join(Product).filter(
             WorkOrder.status == WorkOrderStatus.FINISHED,
-            WorkOrder.end_time >= start_date
+            WorkOrder.end_time >= start_date,
+            Product.line_id == line_id
         ).all()
         
         stats = {}
@@ -623,38 +671,23 @@ def dashboard():
             stats[p_name] += order.total_produced
         return stats
 
-    # Helper for Downtime Reason Stats (Aggregated for ALL time or this Month?)
-    # User asked for "estadistica de pausas", usually monthly is a good default for dashboards.
-    def get_downtime_stats(start_date):
-        # We query DowntimeEvents directly that have a reason
-        downtimes = DowntimeEvent.query.filter(
+    def get_downtime_stats(start_date, line_id):
+        downtimes = DowntimeEvent.query.join(WorkOrder).join(Product).filter(
             DowntimeEvent.start_time >= start_date,
-            DowntimeEvent.reason != None
+            DowntimeEvent.reason != None,
+            Product.line_id == line_id
         ).all()
 
         reason_counts = {}
         total_events = 0
 
         for dt in downtimes:
-            # Clean up reason string if it starts with "Otro: "
-            # Or just group raw. Let's group raw first, or group "Otro: ..." as "Otro" if too diverse?
-            # User wants to know specific causes... so full string is better, 
-            # maybe truncate if too long in UI.
             r = dt.reason
-            
-            # Allow grouping "Otro: xyz" into "Otro" if requested, but user said "aclarar que motivo fue".
-            # So unique reasons are good.
-            if r.startswith("Otro:"):
-                # Clean up display? Maybe just "Otro" for the chart if there are too many unique ones?
-                # For now let's keep the full text so the boss knows.
-                pass
-
             if r not in reason_counts:
                 reason_counts[r] = 0
             reason_counts[r] += 1
             total_events += 1
             
-        # Calculate percentages
         reason_stats = {}
         if total_events > 0:
             for r, count in reason_counts.items():
@@ -662,11 +695,11 @@ def dashboard():
         
         return reason_stats
 
-    # Helper for Time Stats (Run Time vs Downtime)
-    def get_time_stats(start_date):
-        orders = WorkOrder.query.filter(
+    def get_time_stats(start_date, line_id):
+        orders = WorkOrder.query.join(Product).filter(
             WorkOrder.status == WorkOrderStatus.FINISHED,
-            WorkOrder.end_time >= start_date
+            WorkOrder.end_time >= start_date,
+            Product.line_id == line_id
         ).all()
         
         sum_run_seconds = 0
@@ -674,10 +707,7 @@ def dashboard():
         sum_stops_seconds = 0
         
         for order in orders:
-            # Safely get run_time_seconds property
             sum_run_seconds += getattr(order, 'run_time_seconds', 0)
-            
-            # Calculate downtime sums
             for d in order.downtime_events:
                 if d.duration_seconds:
                     if d.reason == "Cambio de Paso":
@@ -685,27 +715,23 @@ def dashboard():
                     else:
                         sum_stops_seconds += d.duration_seconds
             
-        # Convert to Minutes for display/chart
-        # RETURN ORDER MATTERS FOR CHART COLORS: Green, Blue, Red
         return {
             'T. Ejecución': round(sum_run_seconds / 60, 1),
             'T. Cambio de Paso': round(sum_changeover_seconds / 60, 1),
             'T. Paradas': round(sum_stops_seconds / 60, 1)
         }
 
-    # --- ADVANCED ANALYTICS (Timeline, Pareto, OEE) ---
-    def get_timeline_data(target_date):
+    def get_timeline_data(target_date, line_id):
         next_day = target_date + timedelta(days=1)
-        # Fetch orders active during this day
-        orders = WorkOrder.query.filter(
+        orders = WorkOrder.query.join(Product).filter(
             WorkOrder.start_time < next_day,
-            (WorkOrder.end_time >= target_date) | (WorkOrder.end_time == None)
+            (WorkOrder.end_time >= target_date) | (WorkOrder.end_time == None),
+            Product.line_id == line_id
         ).all()
         
         timeline_events = []
         
         for order in orders:
-            # Clamp event to the target day for clearer visualization
             effective_start = max(order.start_time, target_date)
             effective_end = order.end_time if order.end_time else datetime.now()
             effective_end = min(effective_end, next_day)
@@ -713,16 +739,14 @@ def dashboard():
             if effective_end <= effective_start:
                 continue
 
-            # 1. Base Block: Production (Green)
             timeline_events.append({
                 'x': [effective_start.isoformat(), effective_end.isoformat()],
-                'y': 'Línea 1', # Single lane for now
-                'fillColor': '#27ae60', # Green
-                'label': f"{order.product.name if order.product else 'N/A'} (OT-{order.id})",
+                'y': 'Producción', 
+                'fillColor': '#27ae60', 
+                'label': f"{order.product.name} (OT-{order.ot_number.split('-')[-1] if order.ot_number else order.id})",
                 'type': 'Production'
             })
             
-            # 2. Overlay Downtime Events (Red/Blue)
             for d in order.downtime_events:
                 d_start = max(d.start_time, target_date)
                 d_end = d.end_time if d.end_time else datetime.now()
@@ -731,25 +755,17 @@ def dashboard():
                 if d_end <= d_start:
                     continue
                 
-                # Define Color Map
-                fill_color = '#95a5a6' # Default Grey
-                
+                fill_color = '#95a5a6'
                 r_lower = d.reason.lower() if d.reason else "otro"
-                
-                if "cambio" in r_lower:
-                    fill_color = '#2980b9' # Blue
-                elif "falla" in r_lower:
-                    fill_color = '#c0392b' # Red
-                elif "insumo" in r_lower:
-                    fill_color = '#e67e22' # Orange
-                elif "limpieza" in r_lower or "descanso" in r_lower:
-                    fill_color = '#f1c40f' # Yellow
-                elif "otro" in r_lower:
-                    fill_color = '#9b59b6' # Purple
+                if "cambio" in r_lower: fill_color = '#2980b9'
+                elif "falla" in r_lower: fill_color = '#c0392b'
+                elif "insumo" in r_lower: fill_color = '#e67e22'
+                elif "limpieza" in r_lower: fill_color = '#f1c40f'
+                elif "otro" in r_lower: fill_color = '#9b59b6'
                 
                 timeline_events.append({
                     'x': [d_start.isoformat(), d_end.isoformat()],
-                    'y': 'Línea 1',
+                    'y': 'Producción',
                     'fillColor': fill_color,
                     'label': d.reason,
                     'type': 'Downtime'
@@ -757,62 +773,183 @@ def dashboard():
         
         return timeline_events
 
-    def get_downtime_pareto(start_date):
-        orders = WorkOrder.query.filter(WorkOrder.end_time >= start_date).all()
+    def get_downtime_pareto(start_date, line_id):
+        orders = WorkOrder.query.join(Product).filter(
+            WorkOrder.end_time >= start_date,
+            Product.line_id == line_id
+        ).all()
         reasons = {}
         
         for order in orders:
             for d in order.downtime_events:
-                if d.duration_seconds and d.reason != "Cambio de Paso": # Exclude changeover from Pareto? usually yes.
+                if d.duration_seconds and d.reason != "Cambio de Paso":
                     if d.reason not in reasons:
                         reasons[d.reason] = 0
                     reasons[d.reason] += d.duration_seconds
         
-        # Sort by duration DESC
         sorted_reasons = sorted(reasons.items(), key=lambda item: item[1], reverse=True)
-        
         total_downtime = sum(reasons.values())
         
         return {
             'labels': [r[0] for r in sorted_reasons],
-            'data': [round(r[1] / 60, 1) for r in sorted_reasons], # Minutes
+            'data': [round(r[1] / 60, 1) for r in sorted_reasons],
             'total_minutes': round(total_downtime / 60, 1)
         }
 
-    def get_oee_gauge(start_date):
-         # Creating a simplified OEE (Availability only)
-        time_stats = get_time_stats(start_date)
-        run = time_stats['T. Ejecución']
-        # Total Available Time = Run + Stops + Changeover
-        total = run + time_stats['T. Cambio de Paso'] + time_stats['T. Paradas']
+
+    def calculate_availability(start_date, end_date, shift_start_time, shift_end_time, line_id):
+        """
+        Calculates availability based on overlapping production intervals vs planned shift time.
+        """
+        # 1. Fetch Orders in Period
+        orders = WorkOrder.query.join(Product).filter(
+            WorkOrder.status == WorkOrderStatus.FINISHED,
+            WorkOrder.start_time < end_date, 
+            WorkOrder.end_time >= start_date,
+            Product.line_id == line_id
+        ).all()
         
-        if total == 0:
+        # Also include active orders? calculating until 'now' or 'end_date'
+        active_orders = WorkOrder.query.join(Product).filter(
+            WorkOrder.status == WorkOrderStatus.EXECUTION,
+            WorkOrder.start_time < end_date,
+            Product.line_id == line_id
+        ).all()
+        
+        all_orders = orders + active_orders
+        
+        # 2. Extract Intervals (Clamped to Period)
+        intervals = []
+        for o in all_orders:
+            # Handle potentially missing times
+            s = o.start_time
+            e = o.end_time if o.end_time else datetime.now()
+            
+            # Clamp to query window
+            eff_s = max(s, start_date)
+            eff_e = min(e, end_date)
+            
+            if eff_e > eff_s:
+                intervals.append((eff_s, eff_e))
+        
+        # 3. Merge Intervals
+        if not intervals:
             return 0
+            
+        intervals.sort(key=lambda x: x[0])
         
-        return round((run / total) * 100, 1)
+        merged = []
+        if intervals:
+            curr_start, curr_end = intervals[0]
+            for next_start, next_end in intervals[1:]:
+                if next_start < curr_end: # Overlap
+                    curr_end = max(curr_end, next_end)
+                else:
+                    merged.append((curr_start, curr_end))
+                    curr_start, curr_end = next_start, next_end
+            merged.append((curr_start, curr_end))
+            
+        total_run_time_seconds = sum((end - start).total_seconds() for start, end in merged)
+        
+        # 4. Calculate Planned Time (Shift Hours * Days in Period)
+        # Simple approximation: Count business days? Or just Days passed?
+        # User wants "Disponibilidad Proredio".
+        # Let's count "Active Days" (days with at least 1 order) to be fair?
+        # Or standard calendar days?
+        # If we check "Month", strict shift hours (8h * 30d) might be too much if they don't work weekends.
+        # Let's use the period duration but clamped to Shift Hours.
+        
+        # Iterate through days in range
+        total_planned_seconds = 0
+        current_day = start_date.date()
+        end_day_date = end_date.date()
+        
+        while current_day <= end_day_date:
+            # Shift Start/End for this day
+            s_dt = datetime.combine(current_day, shift_start_time)
+            e_dt = datetime.combine(current_day, shift_end_time)
+            
+            # Clamp to global start/end (e.g. if start_date is mid-day)
+            # Actually dashboard standard start_date is 00:00.
+            
+            # Check if now is before shift end (for Today)
+            # If historical, full shift.
+            
+            # Optimization: Check if this day is in the past or today
+            day_start_limit = max(s_dt, start_date)
+            day_end_limit = min(e_dt, end_date)
+            
+            if day_end_limit > day_start_limit:
+                 total_planned_seconds += (day_end_limit - day_start_limit).total_seconds()
+            
+            current_day += timedelta(days=1)
+            
+        if total_planned_seconds == 0:
+            return 0
+            
+        return round(min(100, (total_run_time_seconds / total_planned_seconds) * 100), 1)
 
-    # Calculate dates
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    month_start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # --- MAIN LOOP PER LINE ---
+    dashboard_data = []
 
-    stats = {
-        'day': get_stats(start_day),
-        'week': get_stats(start_week),
-        'month': get_stats(start_month),
-        'downtime_month': get_downtime_stats(start_month),
-        'time_week': get_time_stats(start_week),
-        'time_month': get_time_stats(start_month),
-        # New Stats
-        'timeline': get_timeline_data(today_start),
-        'pareto': get_downtime_pareto(month_start_date),
-        'oee_percent': get_oee_gauge(month_start_date)
+    for line in lines:
+        line_data = {
+            'id': line.id,
+            'name': line.name,
+            'shift': {
+                'start': line.shift_start.strftime('%H:%M') if line.shift_start else "08:00",
+                'end': line.shift_end.strftime('%H:%M') if line.shift_end else "17:00"
+            }
+        }
+
+        # 1. Stats per Period
+        line_data['day'] = get_stats(start_day, line.id)
+        line_data['week'] = get_stats(start_week, line.id)
+        line_data['month'] = get_stats(start_month, line.id)
+        
+        line_data['downtime_month'] = get_downtime_stats(start_month, line.id)
+        line_data['time_week'] = get_time_stats(start_week, line.id)
+        line_data['time_month'] = get_time_stats(start_month, line.id)
+        line_data['pareto'] = get_downtime_pareto(start_month, line.id)
+        line_data['timeline'] = get_timeline_data(start_day, line.id)
+
+        # 2. OEE / Availability Calculation
+        shift_start_time = line.shift_start if line.shift_start else datetime.time(8,0)
+        shift_end_time = line.shift_end if line.shift_end else datetime.time(17,0)
+        
+        # Today
+        line_data['oee_percent'] = calculate_availability(start_day, datetime.now(), shift_start_time, shift_end_time, line.id)
+        
+        # Week (From start of week to NOW)
+        line_data['oee_week'] = calculate_availability(start_week, datetime.now(), shift_start_time, shift_end_time, line.id)
+        
+        # Month (From start of month to NOW)
+        line_data['oee_month'] = calculate_availability(start_month, datetime.now(), shift_start_time, shift_end_time, line.id)
+        
+        dashboard_data.append(line_data)
+
+    date_names = {
+        'day': today.strftime("%d/%m"),
+        'month': today.strftime("%B")
     }
 
-    # --- ANALÍTICA DE PRODUCCIÓN (INCREMENTAL/PROMEDIOS) ---
-    # Usamos los últimos 30 días como ventana, pero calculamos el promedio
-    # basado en el tiempo REAL transcurrido desde la primera orden en ese periodo.
-    # Esto evita diluir los promedios cuando se tienen pocos días de datos (ej: día 1).
+    target_data = {
+        'target': 1000,
+        'current': sum([sum(l['month'].values()) for l in dashboard_data]),
+        'percentage': 0,
+        'status': 'En Camino'
+    }
     
+    return render_template('dashboard.html', 
+                           lines_data=dashboard_data, 
+                           target_data=target_data,
+                           date_names=date_names,
+                           stats={})
+
+@views_bp.route('/general-analytics')
+@login_required
+def general_analytics():
+    # --- ANALÍTICA DE PRODUCCIÓN (GLOBAL ESTIMADA) ---
     window_days = 30
     last_30_days_date = datetime.now() - timedelta(days=window_days)
     
@@ -821,87 +958,34 @@ def dashboard():
         WorkOrder.end_time >= last_30_days_date
     ).all()
     
-    product_stats = {}
-    first_order_dates = {}
-    total_products = {} # Restored missing dict
-    
+    total_products = {} 
     total_liters_30d = 0
+    category_stats = {'sodas': 0, 'bidones_10': 0, 'bidones_20': 0}
 
     for o in orders_30d:
         if o.product:
             p_name = o.product.name
-            
-            # --- Liter Calculation Logic ---
             qty = o.total_produced or 0
             name_lower = p_name.lower()
             volume = 0
             
-            if "soda" in name_lower or "sifon" in name_lower:
-                volume = 1 # User specified 1L for sodas
+            if "soda" in name_lower or "sifon" in name_lower: 
+                volume = 1
+                category_stats['sodas'] += qty
             elif "bidon" in name_lower or "botellon" in name_lower:
                 if "10" in name_lower:
                     volume = 10
+                    category_stats['bidones_10'] += qty
                 else:
-                    volume = 20 # Default to 20L if not specified
+                    volume = 20
+                    category_stats['bidones_20'] += qty
             
             total_liters_30d += (qty * volume)
-            # -------------------------------
 
             if p_name not in total_products:
                 total_products[p_name] = 0
-                first_order_dates[p_name] = o.end_time # Start calculating from first finished order
-            
             total_products[p_name] += qty
-            
-            # Keep track of the oldest order for this product in the window
-            if o.end_time < first_order_dates[p_name]:
-                first_order_dates[p_name] = o.end_time
 
-    product_analytics = []
-    now = datetime.now()
-
-    # Calcular métricas dinámicas
-    for p_name, total in total_products.items():
-        # Calcular días activos desde la primera orden encontrada
-        delta_days = (now - first_order_dates[p_name]).days
-        days_active = max(1, delta_days + 1) # Mínimo 1 día para evitar división por cero
-        
-        # Semanas activas (si pasaron 1 a 7 días -> 1 semana)
-        import math
-        weeks_active = max(1, math.ceil(days_active / 7))
-        
-        daily_avg = int(total / days_active)
-        weekly_avg = int(total / weeks_active)
-        monthly_avg = total # El total del periodo (Max 30 días)
-        
-        product_analytics.append({
-            'name': p_name,
-            'daily': daily_avg,
-            'weekly': weekly_avg,
-            'monthly': monthly_avg
-        })
-    
-    # Translate Date Names to Spanish
-    weekdays_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-    months_es = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    
-    current_day_name = weekdays_es[today.weekday()]
-    current_month_name = months_es[today.month]
-
-    # --- Company Target Logic (Placeholder) ---
-    monthly_target = 100000 # Example target from "The Boss"
-    current_production = sum(stats['month'].values())
-    target_compliance = int((current_production / monthly_target) * 100) if monthly_target > 0 else 0
-    target_data = {
-        'target': monthly_target,
-        'current': current_production,
-        'percentage': target_compliance,
-        'status': 'En Camino' if target_compliance >= 50 else 'Atrasado' # Simple logic
-    }
-    
-    return render_template('dashboard.html', 
-                           stats=stats, 
-                           product_analytics=product_analytics, 
+    return render_template('general_analytics.html', 
                            total_liters_30d=int(total_liters_30d), 
-                           target_data=target_data,
-                           date_names={'day': current_day_name, 'month': current_month_name})
+                           category_stats=category_stats)

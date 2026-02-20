@@ -10,5 +10,8 @@ class Config:
     # Desactivar el rastreo de modificaciones para ahorrar memoria
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
+    # Recargar plantillas automáticamente (útil para desarrollo)
+    TEMPLATES_AUTO_RELOAD = True
+    
     # Clave secreta para seguridad de sesiones (cámbiala en producción)
     SECRET_KEY = 'dev_key_matrix_electronic'

@@ -1,0 +1,173 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="card shadow-sm mb-4 border-0">
+        <div class="card-header bg-dark text-white d-flex align-items-center justify-content-between">
+            <h3 class="mb-0"><i class="bi bi-book-half me-2"></i> Manual del Usuario: Paso a Paso</h3>
+            <small>Sistema OEE Matrix</small>
+        </div>
+        <div class="card-body p-4">
+
+            <div class="alert alert-info shadow-sm mb-5">
+                <h5 class="alert-heading"><i class="bi bi-info-circle-fill me-2"></i>Bienvenido</h5>
+                <p class="mb-0">
+                    Esta guía le mostrará cómo utilizar el sistema Matrix OEE desde la planificación hasta el análisis
+                    de datos.
+                    Siga los pasos a continuación para dominar el flujo de trabajo completo.
+                </p>
+            </div>
+
+            <!-- Paso 1: Carga de OT -->
+            <section class="mb-5" id="paso1">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="badge bg-primary rounded-circle p-3 me-3 fs-4">1</span>
+                    <h4 class="text-primary mb-0">Carga de Orden de Trabajo (OT)</h4>
+                </div>
+                <div class="card bg-light border-0">
+                    <div class="card-body">
+                        <p class="lead">El proceso inicia con la definición de lo que se va a producir.</p>
+                        <ul class="list-group list-group-flush bg-transparent mb-3">
+                            <li class="list-group-item bg-transparent"><i
+                                    class="bi bi-check-circle-fill text-success me-2"></i><strong>Cliente:</strong>
+                                Seleccione un cliente existente o registre uno nuevo al instante.</li>
+                            <li class="list-group-item bg-transparent"><i
+                                    class="bi bi-check-circle-fill text-success me-2"></i><strong>Planificación:</strong>
+                                Defina la fecha de inicio y la fecha estimada de entrega.</li>
+                            <li class="list-group-item bg-transparent"><i
+                                    class="bi bi-check-circle-fill text-success me-2"></i><strong>Productos:</strong>
+                                Agregue uno o varios ítems a la orden.</li>
+                        </ul>
+
+                        <div class="text-center">
+                            <img src="{{ url_for('static', filename='img/tutorial/create_order.png') }}"
+                                class="img-fluid rounded shadow border" alt="Interfaz de Carga de OT">
+                            <p class="text-muted mt-2 small">Figura 1: Formulario de creación de nueva Orden de Trabajo.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Paso 2: Login -->
+            <section class="mb-5" id="paso2">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="badge bg-primary rounded-circle p-3 me-3 fs-4">2</span>
+                    <h4 class="text-primary mb-0">Acceso al Sistema (Login)</h4>
+                </div>
+                <div class="card bg-light border-0">
+                    <div class="card-body">
+                        <p>Para gestionar las órdenes y acceder a los tableros, es necesario identificarse.</p>
+                        <p>El sistema cuenta con roles de usuario (Administrador, Supervisor, Operario) que determinan
+                            qué funciones están disponibles.</p>
+
+                        <div class="text-center">
+                            <img src="{{ url_for('static', filename='img/tutorial/login.png') }}"
+                                class="img-fluid rounded shadow border" style="max-width: 400px;"
+                                alt="Pantalla de Login">
+                            <p class="text-muted mt-2 small">Figura 2: Pantalla de autenticación segura.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Paso 3: Configuración -->
+            <section class="mb-5" id="paso3">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="badge bg-primary rounded-circle p-3 me-3 fs-4">3</span>
+                    <h4 class="text-primary mb-0">Configuración de Líneas</h4>
+                </div>
+                <div class="card bg-light border-0">
+                    <div class="card-body">
+                        <p>Antes de operar, asegúrese de que la configuración de turnos sea la correcta para un cálculo
+                            preciso del OEE.</p>
+                        <p>Aquí puede definir los horarios de inicio y fin de turno para cada línea de producción (Ej.
+                            Embotellado, Sodas).</p>
+
+                        <div class="text-center">
+                            <img src="{{ url_for('static', filename='img/tutorial/config_lines.png') }}"
+                                class="img-fluid rounded shadow border" alt="Configuración de Líneas">
+                            <p class="text-muted mt-2 small">Figura 3: Panel de configuración de turnos por línea.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Paso 4: Operación y Dashboard -->
+            <section class="mb-5" id="paso4">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="badge bg-primary rounded-circle p-3 me-3 fs-4">4</span>
+                    <h4 class="text-primary mb-0">Monitorización y Dashboard</h4>
+                </div>
+                <div class="card bg-light border-0">
+                    <div class="card-body">
+                        <p class="lead">Supervise la producción en tiempo real.</p>
+                        <p>El Dashboard principal le ofrece una visión inmediata del estado de la planta:</p>
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <h5><i class="bi bi-speedometer2 text-info me-2"></i>Disponibilidad</h5>
+                                <p class="small text-muted">Medidor en tiempo real que compara el tiempo productivo vs.
+                                    el tiempo total del turno.</p>
+                            </div>
+                            <div class="col-md-6">
+                                <h5><i class="bi bi-stop-circle text-danger me-2"></i>Línea de Tiempo</h5>
+                                <p class="small text-muted">Visualice las paradas y actividades minuto a minuto si
+                                    hubiera actividad registrada.</p>
+                            </div>
+                        </div>
+                        <div class="row mt-2">
+                            <div class="col-12">
+                                <h5><i class="bi bi-box-seam text-success me-2"></i>Resumen de Producción</h5>
+                                <p class="small text-muted">Contadores automáticos de producción diaria, semanal y
+                                    mensual por producto.</p>
+                            </div>
+                        </div>
+
+                        <div class="text-center mt-3">
+                            <img src="{{ url_for('static', filename='img/tutorial/dashboard_summary.png') }}"
+                                class="img-fluid rounded shadow border" alt="Dashboard Principal">
+                            <p class="text-muted mt-2 small">Figura 4: Centro de comando y control de producción.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Paso 5: Historial y Auditoría -->
+            <section class="mb-5" id="paso5">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="badge bg-primary rounded-circle p-3 me-3 fs-4">5</span>
+                    <h4 class="text-primary mb-0">Historial y Detalles</h4>
+                </div>
+                <div class="card bg-light border-0">
+                    <div class="card-body">
+                        <p>Acceda al registro histórico de todas las órdenes finalizadas.</p>
+                        <p>Desde esta lista puede auditar cualquier orden pasada, verificar tiempos, cantidades
+                            producidas y acceder al detalle minucioso de cada evento.</p>
+
+                        <div class="text-center">
+                            <img src="{{ url_for('static', filename='img/tutorial/order_history.png') }}"
+                                class="img-fluid rounded shadow border" alt="Historial de Órdenes">
+                            <p class="text-muted mt-2 small">Figura 5: Registro histórico de producción.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Conclusión -->
+            <section>
+                <div class="alert alert-secondary border-0 shadow-sm p-4">
+                    <h5 class="alert-heading fw-bold"><i class="bi bi-rocket-takeoff-fill text-warning me-2"></i>¿Listo
+                        para empezar?</h5>
+                    <p>
+                        Ahora que conoce el flujo básico, puede comenzar a cargar su primera orden de trabajo.
+                    </p>
+                    <hr>
+                    <a href="{{ url_for('views.create_order') }}" class="btn btn-primary btn-lg"><i
+                            class="bi bi-plus-lg me-2"></i>Crear Nueva Orden</a>
+                </div>
+            </section>
+
+        </div>
+    </div>
+</div>
+{% endblock %}
