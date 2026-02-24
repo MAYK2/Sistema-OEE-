@@ -33,6 +33,8 @@ class WorkOrder(db.Model):
     # Counters
     total_produced = db.Column(db.Integer, default=0)
     total_defective = db.Column(db.Integer, default=0)
+    sensor_count = db.Column(db.Integer, default=0)
+    manual_count_modified = db.Column(db.Boolean, default=False)
 
     # Relaciones
     downtime_events = db.relationship('DowntimeEvent', backref='work_order', lazy=True)

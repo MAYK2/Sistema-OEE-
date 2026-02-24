@@ -14,9 +14,11 @@ def create_app(config_class=Config):
     # Register Blueprints
     from app.api.orders import orders_bp
     from app.api.catalogs import catalogs_bp
+    from app.api.iot import iot_bp
 
     app.register_blueprint(orders_bp, url_prefix='/api/orders')
     app.register_blueprint(catalogs_bp, url_prefix='/api/catalogs')
+    app.register_blueprint(iot_bp, url_prefix='/api/iot')
 
     # Register Frontend Blueprint
     from app.views import views_bp

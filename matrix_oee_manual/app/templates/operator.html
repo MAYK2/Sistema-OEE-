@@ -62,6 +62,48 @@
         text-align: center;
         font-family: 'Courier New', monospace;
         color: #2c3e50;
+        transition: transform 0.3s ease;
+    }
+
+    .counter-display:hover {
+        transform: scale(1.02);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Modern Button Gradients */
+    .btn-xxl {
+        background-size: 200% auto;
+    }
+
+    .btn-xxl.btn-success {
+        background-image: linear-gradient(to right, #11998e 0%, #38ef7d 51%, #11998e 100%);
+        border: none;
+    }
+
+    .btn-xxl.btn-danger {
+        background-image: linear-gradient(to right, #cb2d3e 0%, #ef473a 51%, #cb2d3e 100%);
+        border: none;
+    }
+
+    .btn-xxl.btn-warning {
+        background-image: linear-gradient(to right, #f12711 0%, #f5af19 51%, #f12711 100%);
+        border: none;
+        color: #fff !important;
+    }
+
+    .btn-xxl.btn-info {
+        background-image: linear-gradient(to right, #36D1DC 0%, #5B86E5 51%, #36D1DC 100%);
+        border: none;
+    }
+
+    .btn-xxl.btn-secondary {
+        background-image: linear-gradient(to right, #757F9A 0%, #D7DDE8 51%, #757F9A 100%);
+        border: none;
+        color: #1a1a2e !important;
+    }
+
+    .btn-xxl:hover {
+        background-position: right center;
     }
 </style>
 
@@ -122,6 +164,11 @@
                         <i class="bi bi-play-circle-fill"></i> CONTINUAR
                     </button>
 
+                    <button id="btn-justify" class="btn btn-warning btn-xxl shadow" onclick="changeStatus('pause')"
+                        style="display: none;">
+                        <i class="bi bi-exclamation-triangle-fill"></i> JUSTIFICAR PARADA
+                    </button>
+
                     <!-- Stop Changeover Button -->
                     <button id="btn-stop-changeover" class="btn btn-warning btn-xxl shadow" onclick="stopChangeover()"
                         style="display: none;">
@@ -171,9 +218,9 @@
                         <div id="stopwatch" class="display-3 fw-bold font-monospace">00:00:00</div>
                     </div>
 
-                    <!-- PAUSE TIMER CARD (Hidden by default) -->
-                    <div id="pause-timer-card" class="alert alert-danger p-3 mb-4" style="display: none;">
-                        <small class="text-uppercase fw-bold text-danger">TIEMPO EN PAUSA</small>
+                    <!-- PAUSE TIMER CARD (Always visible for comparison) -->
+                    <div id="pause-timer-card" class="alert alert-danger p-3 mb-4">
+                        <small class="text-uppercase fw-bold text-danger">TIEMPO EN PAUSA TOTAL</small>
                         <div id="pause-timer" class="display-3 fw-bold font-monospace text-danger">00:00:00</div>
                     </div>
 
@@ -270,15 +317,46 @@
             </div>
             <div class="modal-body text-center py-4">
                 <h4>¡Orden Completada!</h4>
-                <p class="mb-4">Por favor, ingrese la cantidad total producida para cerrar el registro:</p>
 
-                <div class="alert alert-info shadow-sm mb-4">
-                    <i class="bi bi-info-circle-fill"></i> Se recomienda haber alcanzado el objetivo de:
-                    <strong class="fs-5 text-decoration-underline">{{ order.planned_quantity }}</strong> unidades.
+                <div class="alert alert-primary shadow-sm mb-4">
+                    <i class="bi bi-cpu-fill"></i> El sensor registró:
+                    <strong class="fs-4 d-block mt-2" id="modal-sensor-count">-- bidones</strong>
                 </div>
 
-                <div class="mb-3 text-start">
-                    <label class="form-label fw-bold">Cantidad Total Producida:</label>
+                <div class="alert alert-info shadow-sm mb-4">
+                    <i class="bi bi-info-circle-fill"></i> Objetivo planificado:
+                    <strong class="fs-5">{{ order.planned_quantity }}</strong> unidades.
+                </div>
+
+                <div class="mb-4 text-center bg-light p-4 border rounded shadow-sm">
+                    <label class="form-label fw-bold d-block mb-4 fs-4 text-dark">¿Es correcta la cantidad registrada
+                        por el sensor?</label>
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <input type="radio" class="btn-check" name="sensorCorrectRadios" id="sensorCorrectYes"
+                                value="yes" checked onchange="toggleManualInput()">
+                            <label
+                                class="btn btn-outline-success w-100 p-4 fs-5 fw-bold d-flex flex-column align-items-center justify-content-center"
+                                for="sensorCorrectYes" style="border-width: 3px; border-radius: 15px; height: 100%;">
+                                <i class="bi bi-check-circle-fill display-4 mb-2"></i>
+                                SÍ, ES CORRECTA
+                            </label>
+                        </div>
+                        <div class="col-6">
+                            <input type="radio" class="btn-check" name="sensorCorrectRadios" id="sensorCorrectNo"
+                                value="no" onchange="toggleManualInput()">
+                            <label
+                                class="btn btn-outline-danger w-100 p-4 fs-5 fw-bold d-flex flex-column align-items-center justify-content-center"
+                                for="sensorCorrectNo" style="border-width: 3px; border-radius: 15px; height: 100%;">
+                                <i class="bi bi-pencil-square display-4 mb-2"></i>
+                                NO, MODIFICAR
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3 text-start" id="manualInputContainer" style="display: none;">
+                    <label class="form-label fw-bold">Cantidad Total Real Producida:</label>
                     <input type="number" id="finalQuantityInput" class="form-control form-control-lg text-center fs-2"
                         placeholder="Ej: 500" min="0">
                 </div>
@@ -302,19 +380,23 @@
     // Pause / Changeover handling
     const pauseStartIso = "{{ pause_start_iso if pause_start_iso else '' }}";
     const isChangeover = {{ 'true' if is_changeover else 'false' }};
+    let forceJustifyOnLoad = {{ 'true' if force_justify_on_load else 'false' }};
 
-    let pauseSeconds = 0;
+    // Cumulative downtime from the server
+    let pauseSeconds = {{ total_downtime_seconds | default (0) }};
 
     // Flag to know if we should increment logic
     let isRunning = (currentStatus === 'EXECUTION');
 
     let timerInterval = null;
     let pauseInterval = null;
+    let pollingInterval = null;
 
     // --- NEW: Freeze Timers UX ---
     function pauseTimers() {
         if (timerInterval) clearInterval(timerInterval);
         if (pauseInterval) clearInterval(pauseInterval);
+        if (pollingInterval) clearInterval(pollingInterval);
     }
 
     function restoreTimers() {
@@ -324,17 +406,33 @@
     }
 
     function initUI() {
-        // Calculate initial pause/changeover duration if applicable
+        // Evaluate dynamic pause additions
+        let additionalPause = 0;
         if (currentStatus === 'PENDING' && pauseStartIso) {
             const startTime = new Date(pauseStartIso).getTime();
-            const now = new Date().getTime(); // Browser time
-            pauseSeconds = Math.floor((now - startTime) / 1000);
-            if (pauseSeconds < 0) pauseSeconds = 0;
+            const now = new Date().getTime();
+            additionalPause = Math.floor((now - startTime) / 1000);
+            if (additionalPause < 0) additionalPause = 0;
         }
+
+        // Sum total downtime + current downtime duration
+        let baseDowntime = parseInt("{{ total_downtime_seconds | default(0) }}", 10) || 0;
+        pauseSeconds = baseDowntime + additionalPause;
+
+        console.log("Downtime DB:", baseDowntime, "| Additional:", additionalPause, "| Total pauseSeconds:", pauseSeconds);
 
         toggleButtons();
         startStopwatch();
         startPauseTimer();
+        startPolling();
+
+        // Auto-open pause modal if waiting for justification
+        if (forceJustifyOnLoad && currentStatus === 'PENDING') {
+            if (!document.getElementById('pauseModal').classList.contains('show')) {
+                forceJustifyOnLoad = false;
+                changeStatus('pause');
+            }
+        }
     }
 
     function startStopwatch() {
@@ -356,26 +454,22 @@
     function startPauseTimer() {
         if (pauseInterval) clearInterval(pauseInterval);
 
-        // Show Timer if Paused OR Changeover
-        if (currentStatus === 'PENDING' && pauseStartIso) {
+        // ALWAYS update the generic pause display so it shows historical data
+        updatePauseDisplay();
 
+        // Show Timer ticks if Paused OR Changeover
+        if (currentStatus === 'PENDING' && pauseStartIso) {
             if (isChangeover) {
                 document.getElementById('changeover-timer-card').style.display = 'block';
-                document.getElementById('pause-timer-card').style.display = 'none';
                 updateChangeoverDisplay();
-            } else {
-                document.getElementById('pause-timer-card').style.display = 'block';
-                document.getElementById('changeover-timer-card').style.display = 'none';
-                updatePauseDisplay();
             }
 
             pauseInterval = setInterval(() => {
                 pauseSeconds++;
                 if (isChangeover) updateChangeoverDisplay();
-                else updatePauseDisplay();
+                updatePauseDisplay(); // Always update cumulative downtime
             }, 1000);
         } else {
-            document.getElementById('pause-timer-card').style.display = 'none';
             document.getElementById('changeover-timer-card').style.display = 'none';
         }
     }
@@ -408,6 +502,7 @@
         const btnStopChangeover = document.getElementById('btn-stop-changeover');
 
         const btnPause = document.getElementById('btn-pause');
+        const btnJustify = document.getElementById('btn-justify');
         const btnFinish = document.getElementById('btn-finish');
         const banner = document.getElementById('main-status-banner');
 
@@ -417,6 +512,7 @@
         btnResume.style.display = 'none';
         btnStopChangeover.style.display = 'none';
         btnPause.style.display = 'none';
+        if (btnJustify) btnJustify.style.display = 'none';
         btnFinish.disabled = false;
 
         if (currentStatus === 'EXECUTION') {
@@ -431,6 +527,10 @@
                     btnStopChangeover.style.display = 'block';
                     banner.className = 'status-banner bg-info text-dark';
                     banner.innerHTML = '<i class="bi bi-tools me-3"></i> CAMBIO DE PASO';
+                } else if (forceJustifyOnLoad) {
+                    if (btnJustify) btnJustify.style.display = 'block';
+                    banner.className = 'status-banner bg-danger';
+                    banner.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-3"></i> PARADA AUTOMÁTICA';
                 } else {
                     btnResume.style.display = 'block';
                     banner.className = 'status-banner bg-danger';
@@ -530,19 +630,53 @@
     }
 
     function requestFinish() {
+        const countDisplay = document.getElementById('count-display');
+        let currentSensedCount = 0;
+
+        if (countDisplay && countDisplay.innerText !== '--') {
+            currentSensedCount = parseInt(countDisplay.innerText) || 0;
+        }
+
+        // Display the sensed count in the modal
+        document.getElementById('modal-sensor-count').innerText = `${currentSensedCount} bidones`;
+
+        // Pre-fill the input field with the sensor's count
+        document.getElementById('finalQuantityInput').value = currentSensedCount;
+
         const modal = new bootstrap.Modal(document.getElementById('finishModal'));
         modal.show();
     }
 
-    function confirmFinish() {
-        const finalQty = document.getElementById('finalQuantityInput').value;
+    function toggleManualInput() {
+        const isNo = document.getElementById('sensorCorrectNo').checked;
+        const container = document.getElementById('manualInputContainer');
+        if (isNo) {
+            container.style.display = 'block';
+        } else {
+            container.style.display = 'none';
+        }
+    }
 
-        if (!finalQty || parseInt(finalQty) < 0) {
-            alert("Por favor ingrese una cantidad válida.");
-            return;
+    function confirmFinish() {
+        // Read the pure sensor count we saved in a global or data attribute earlier
+        // Or re-parse from the text
+        const countText = document.getElementById('modal-sensor-count').innerText;
+        const sensorCount = parseInt(countText) || 0;
+
+        let finalQty = sensorCount;
+        let isModified = false;
+
+        const isNo = document.getElementById('sensorCorrectNo').checked;
+        if (isNo) {
+            finalQty = document.getElementById('finalQuantityInput').value;
+            isModified = true;
+            if (!finalQty || parseInt(finalQty) < 0) {
+                alert("Por favor ingrese una cantidad válida.");
+                return;
+            }
         }
 
-        if (!confirm(`¿Confirma que se produjeron ${finalQty} unidades? La orden se cerrará.`)) return;
+        if (!confirm(`¿Confirma declarar ${finalQty} unidades producidas? La orden se cerrará.`)) return;
 
         const modal = bootstrap.Modal.getInstance(document.getElementById('finishModal'));
         modal.hide();
@@ -550,7 +684,11 @@
         fetch(`/api/orders/${orderId}/finish`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ produced_quantity: finalQty })
+            body: JSON.stringify({
+                produced_quantity: finalQty,
+                sensor_count: sensorCount,
+                manual_count_modified: isModified
+            })
         })
             .then(res => res.json())
             .then(data => {
@@ -569,11 +707,57 @@
             .then(data => {
                 if (data.error) {
                     alert(data.error);
+                    throw new Error(data.error);
                 }
             })
-            .catch(err => console.error(err));
+            .catch(err => {
+                console.error(err);
+                throw err;
+            });
     }
 
-    initUI();
+    // --- REAL-TIME POLLING ---
+    function startPolling() {
+        if (pollingInterval) clearInterval(pollingInterval);
+
+        // Only poll if not finished
+        if (currentStatus === 'FINISHED') return;
+
+        pollingInterval = setInterval(() => {
+            fetch(`/api/orders/${orderId}/status_realtime`)
+                .then(res => res.json())
+                .then(data => {
+                    console.log("📡 Datos en tiempo real desde el servidor:", data);
+
+                    // Update barrel count on screen
+                    const countDisplay = document.getElementById('count-display');
+                    if (countDisplay) {
+                        countDisplay.innerText = data.total_produced;
+                    }
+
+                    // Check for automatic status changes (e.g., ESP32 sent "stopped")
+                    if (data.status === 'PENDING' && currentStatus === 'EXECUTION' && data.force_justify) {
+                        console.log("Automatic stop detected from sensor.");
+                        pauseTimers(); // Stop ticking immediately
+
+                        // Force a reload to let the server re-render the view with the correct pause states,
+                        // or we could manually trigger the pause modal here.
+                        // Reloading is safer to ensure all context (pause_start_iso) is fresh.
+                        window.location.reload();
+                    }
+
+                    // Check for automatic resume (e.g., ESP32 sent "running" while in auto-pause)
+                    if (data.status === 'EXECUTION' && currentStatus === 'PENDING' && !isChangeover) {
+                        console.log("Automatic resume detected from sensor.");
+                        window.location.reload();
+                    }
+                })
+                .catch(err => console.error('Error polling status:', err));
+        }, 2000); // Poll every 2 seconds
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        initUI();
+    });
 </script>
 {% endblock %}

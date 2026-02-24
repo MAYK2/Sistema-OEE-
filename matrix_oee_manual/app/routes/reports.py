@@ -1,412 +1,30 @@
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify, flash
-from flask_login import login_user, logout_user, login_required, current_user
-from datetime import datetime, timedelta, date
+from flask import Blueprint, render_template, request, send_file
+from flask_login import login_required
+from datetime import datetime, timedelta
 from app.extensions import db
 from app.models.work_order import WorkOrder, WorkOrderStatus
+from app.models.downtime import DowntimeEvent
 from app.models.product import Product
 from app.models.client import Client
-from app.models.downtime import DowntimeEvent
-from app.models.user import User
 from app.models.line import Line
+from app.utils import admin_required
+from app.services.time_sync import get_network_time
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+from io import BytesIO
 
-views_bp = Blueprint('views', __name__)
+reports_bp = Blueprint('reports', __name__)
 
-from functools import wraps
 
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated or not current_user.is_admin:
-            flash("⛔ Acceso denegado: Se requieren permisos de Administrador.", "danger")
-            return redirect(url_for('views.index'))
-        return f(*args, **kwargs)
-    return decorated_function
 
-@views_bp.route('/')
-def index():
-    if not current_user.is_authenticated:
-        return redirect(url_for('views.create_order'))
-    # Solo buscamos órdenes que el operario pueda ver para trabajar
-    # PENDING: Creadas pero no iniciadas
-    # EXECUTION: Órdenes que ya están corriendo (cronómetro activo)
-    orders = WorkOrder.query.filter(
-        WorkOrder.status.in_([WorkOrderStatus.PENDING, WorkOrderStatus.EXECUTION])
-    ).all()
-    
-    return render_template('index.html', orders=orders)
-
-@views_bp.route('/tutorial')
-@login_required
-def tutorial():
-    return render_template('tutorial.html')
-
-@views_bp.route('/orders/new', methods=['GET', 'POST'])
-def create_order():
-    if request.method == 'POST':
-        if request.is_json:
-            data = request.get_json()
-            
-            # --- Lógica de Cliente (Tu código original) ---
-            client_mode = data.get('client_mode')
-            client_id = None
-            
-            if client_mode == 'existing':
-                client_id = data.get('existing_client_id')
-            elif client_mode == 'new':
-                new_client_name = data.get('new_client_name')
-                new_client_phone = data.get('new_client_phone')
-                new_client_email = data.get('new_client_email')
-                new_client = Client(name=new_client_name, phone=new_client_phone, email=new_client_email)
-                db.session.add(new_client)
-                db.session.commit()
-                client_id = new_client.id
-            
-            # --- Fecha Estimada ---
-            estimated_finish_str = data.get('estimated_finish')
-            estimated_finish = None
-            if estimated_finish_str:
-                try:
-                    estimated_finish = datetime.strptime(estimated_finish_str, '%Y-%m-%dT%H:%M')
-                except ValueError:
-                    pass
-
-            # --- Crear Órdenes ---
-            items = data.get('items', [])
-            created_count = 0
-            
-            # Optimization: Fetch last OT number ONCE for the batch
-            year = datetime.now().year
-            last_order = WorkOrder.query.filter(WorkOrder.ot_number.like(f'OT-{year}-%'))\
-                                        .order_by(WorkOrder.id.desc())\
-                                        .first()
-            
-            last_seq = 0
-            if last_order:
-                try:
-                    last_seq = int(last_order.ot_number.split('-')[-1])
-                except ValueError:
-                    pass
-
-            for item in items:
-                # Increment sequence for each item in the batch
-                new_seq = last_seq + 1 + created_count
-                ot_number = f"OT-{year}-{new_seq:04d}"
-                
-                planned_quantity = item.get('quantity')
-                
-                new_order = WorkOrder(
-                    ot_number=ot_number,
-                    client_id=client_id,
-                    product_id=item.get('product_id'),
-                    planned_quantity=planned_quantity,
-                    estimated_finish=estimated_finish,
-                    status=WorkOrderStatus.PENDING
-                )
-                db.session.add(new_order)
-                created_count += 1
-            
-            db.session.commit()
-            return jsonify({'message': f'{created_count} órdenes creadas correctamente'}), 200
-        
-        return redirect(url_for('views.index'))
-
-    # GET request
-    products = Product.query.all()
-    clients = Client.query.all()
-    today_date = datetime.now().strftime('%Y-%m-%dT%H:%M')
-    return render_template('create_order.html', products=products, clients=clients, today_date=today_date)
-
-@views_bp.route('/login', methods=['GET', 'POST'])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('views.index'))
-    
-    error = None
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        user = User.query.filter_by(username=username).first()
-        
-        if user and user.check_password(password):
-            login_user(user)
-            return redirect(url_for('views.index'))
-        else:
-            error = "Usuario o contraseña incorrectos"
-            
-    return render_template('login.html', error=error)
-
-@views_bp.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('views.login'))
-
-@views_bp.route('/operate/<int:order_id>')
-@login_required
-def operate(order_id):
-    # FORCE FRESH SESSION to ensure we see the latest downtimes/status changes
-    db.session.remove()
-    
-    order = WorkOrder.query.get_or_404(order_id)
-    
-    # Calcular Tiempos de Parada
-    downtimes = DowntimeEvent.query.filter_by(work_order_id=order.id).all()
-    total_downtime_seconds = sum(d.duration_seconds for d in downtimes if d.duration_seconds)
-    
-    # Verificar si hay una pausa activa ahora mismo (Prioritize latest if multiple exist)
-    open_downtimes = [d for d in downtimes if d.end_time is None]
-    open_downtimes.sort(key=lambda x: x.start_time, reverse=True)
-    current_pause = open_downtimes[0] if open_downtimes else None
-    
-    pause_start_iso = None
-    is_changeover = False
-    force_justify_on_load = False
-    
-    if current_pause and current_pause.start_time:
-        pause_start_iso = current_pause.start_time.isoformat()
-        if current_pause.reason == "Cambio de Paso":
-            is_changeover = True
-            
-        # Revisar si aún hay un registro fantasma "Pendiente de justificar"
-        needs_justify = DowntimeEvent.query.filter_by(
-            work_order_id=order.id, 
-            end_time=None,
-            reason="Automático: Pendiente de justificar"
-        ).first()
-        if needs_justify:
-            force_justify_on_load = True
-
-    # CORRECCIÓN: Usar 'start_time' estándar en lugar de '_real'
-    # Calculate elapsed seconds server-side for robust stopwatch
-    initial_elapsed_seconds = 0
-    now_time = datetime.now()
-    
-    # SELF-HEALING: If order is EXECUTION but has no start_time (Data Corruption Fix)
-    if order.status == WorkOrderStatus.EXECUTION and not order.start_time:
-         from datetime import timedelta
-         # Recovery: Set start time to now so timer resumes/starts
-         order.start_time = now_time
-         db.session.commit()
-
-    if order.start_time:
-         # If order is finished, clamp to end_time
-         if order.status == WorkOrderStatus.FINISHED and order.end_time:
-             now_time = order.end_time
-             
-         # If we are currently paused, the clock shouldn't be "ticking" past the pause start
-         # But the total_downtime calculation already sums CLOSED downtimes.
-         # So: Elapsed = (Now - Start) - ClosedDowntimes - CurrentOpenDowntimeDuration
-         
-         total_duration = (now_time - order.start_time).total_seconds()
-         
-         current_pause_duration = 0
-         if current_pause and current_pause.start_time:
-              current_pause_duration = (now_time - current_pause.start_time).total_seconds()
-              
-         initial_elapsed_seconds = int(max(0, total_duration - total_downtime_seconds - current_pause_duration))
-         
-         initial_elapsed_seconds = int(max(0, total_duration - total_downtime_seconds - current_pause_duration))
-         
-    # Log unconditionally to debug why start_time is missing
-    try:
-         with open('/tmp/matrix_debug.log', 'a') as f:
-             f.write(f"DEBUG_VIEW: OT={order.ot_number} ID={order.id}\n")
-             f.write(f"   Status={order.status.name} StartTime={order.start_time}\n")
-             f.write(f"   Now={now_time} Elapsed={initial_elapsed_seconds}\n")
-    except Exception as e:
-         pass
-
-    return render_template('operator.html', 
-                           order=order, 
-                           initial_elapsed_seconds=initial_elapsed_seconds,
-                           pause_start_iso=pause_start_iso,
-                           is_changeover=is_changeover,
-                           force_justify_on_load=force_justify_on_load,
-                           total_downtime_seconds=total_downtime_seconds)
-
-# --- API ENDPOINTS ---
-
-@views_bp.route('/api/orders/<int:id>/start', methods=['POST'])
-@login_required
-def start_order(id):
-    # FORCE FRESH SESSION to avoid stale reads (Isolation Level issues)
-    # Ensure any previous transaction state is cleared so we see updates from other requests (like verify/pause)
-    db.session.remove() 
-
-    order = WorkOrder.query.get_or_404(id)
-    data = request.get_json() or {}
-    
-    # ROBUSTNESS: Always check for open downtimes and close them when starting
-    # This ensures that even if status transition logic was bypassed/buggy, we don't leave open pauses ticking
-    # Get the LATEST open downtime (in case of multiple zombies)
-    open_downtime = DowntimeEvent.query.filter_by(work_order_id=order.id, end_time=None)\
-                                       .order_by(DowntimeEvent.start_time.desc())\
-                                       .first()
-    
-    if open_downtime:
-        open_downtime.end_time = datetime.now()
-        # Calculate duration
-        delta = open_downtime.end_time - open_downtime.start_time
-        open_downtime.duration_seconds = int(delta.total_seconds())
-        # Commit immediately to ensure consistency
-        db.session.add(open_downtime)
-        db.session.commit()
-
-    # Logic to start order if PENDING (New or Paused)
-    if order.status == WorkOrderStatus.PENDING:
-        # Change status to EXECUTION
-        order.status = WorkOrderStatus.EXECUTION
-        
-        # Record start time only if it's the first start
-        if not order.start_time: 
-            order.start_time = datetime.now()
-            
-        # Save operators count if provided
-        if 'operators_count' in data:
-            order.operators_count = int(data['operators_count'])
-            
-        db.session.commit()
-        
-        with open('/tmp/matrix_debug.log', 'a') as f:
-             f.write(f"DEBUG_START: OT={order.ot_number} ID={order.id}\n")
-             f.write(f"   Set StartTime={order.start_time}\n")
-        
-        return jsonify({
-            "message": "Order started", 
-            "status": order.status.value, 
-            "start_time": order.start_time.isoformat()
-        })
-    
-    # Si la orden ya estaba en ejecución, no hacemos nada
-    return jsonify({"error": "Invalid status transition"}), 400
-
-@views_bp.route('/api/orders/<int:id>/pause', methods=['POST'])
-@login_required
-def pause_order(id):
-    order = WorkOrder.query.get_or_404(id)
-    data = request.get_json() or {}
-    reason = data.get('reason', 'Sin motivo especificado')
-
-    if order.status == WorkOrderStatus.EXECUTION:
-        order.status = WorkOrderStatus.PENDING # Usamos PENDING como estado de Pausa visual
-        
-        # Crear evento de parada
-        downtime = DowntimeEvent(
-            work_order_id=order.id,
-            reason=reason,
-            comment=data.get('comment'),
-            start_time=datetime.now()
-        )
-        db.session.add(downtime)
-        db.session.commit()
-        return jsonify({"message": "Order paused", "status": order.status.value})
-
-    elif order.status == WorkOrderStatus.PENDING:
-        pending_downtimes = DowntimeEvent.query.filter_by(
-            work_order_id=order.id, 
-            end_time=None,
-            reason="Automático: Pendiente de justificar"
-        ).all()
-        
-        if pending_downtimes:
-            for dw in pending_downtimes:
-                dw.reason = reason
-                if data.get('comment'):
-                    dw.comment = data.get('comment')
-            db.session.commit()
-            return jsonify({"message": "Downtime justified", "status": order.status.value})
-        
-    return jsonify({"error": "Order must be in EXECUTION to pause or have an automatic pending downtime"}), 400
-
-@views_bp.route('/api/orders/<int:id>/finish', methods=['POST'])
-@login_required
-def finish_order(id):
-    order = WorkOrder.query.get_or_404(id)
-    data = request.get_json() or {}
-    
-    # Guardar cantidad final ingresada por el usuario
-    if 'produced_quantity' in data:
-         order.total_produced = int(data['produced_quantity'])
-         
-    if 'sensor_count' in data:
-         order.sensor_count = int(data['sensor_count'])
-         
-    if 'manual_count_modified' in data:
-         order.manual_count_modified = bool(data['manual_count_modified'])
-
-    order.status = WorkOrderStatus.FINISHED
-    # CORRECCIÓN: Usar 'end_time' estándar
-    order.end_time = datetime.now()
-    
-    # Cerrar pausas abiertas si quedaron
-    downtime = DowntimeEvent.query.filter_by(work_order_id=order.id, end_time=None).first()
-    if downtime:
-        downtime.end_time = order.end_time
-        downtime.duration_seconds = int((downtime.end_time - downtime.start_time).total_seconds())
-
-    db.session.commit()
-    return jsonify({"message": "Order finished", "status": order.status.value})
-
-# --- CHANGEOVER ENDPOINTS ---
-@views_bp.route('/api/orders/<int:id>/changeover/start', methods=['POST'])
-@login_required
-def start_changeover(id):
-    # Force Session Refresh
-    db.session.remove()
-
-    order = WorkOrder.query.get_or_404(id)
-    
-    # Check if already in changeover or running
-    if order.status != WorkOrderStatus.PENDING:
-         return jsonify({"error": "Order must be PENDING to start changeover"}), 400
-
-    # Check for open events
-    open_event = DowntimeEvent.query.filter_by(work_order_id=order.id, end_time=None).first()
-    if open_event:
-        return jsonify({"error": "An event is already in progress"}), 400
-
-    # Create Changeover Event
-    event = DowntimeEvent(
-        work_order_id=order.id,
-        reason="Cambio de Paso",
-        start_time=datetime.now()
-    )
-    db.session.add(event)
-    db.session.commit()
-    
-    return jsonify({"message": "Changeover started", "start_time": event.start_time.isoformat()})
-
-@views_bp.route('/api/orders/<int:id>/changeover/stop', methods=['POST'])
-@login_required
-def stop_changeover(id):
-    # Force Session Refresh
-    db.session.remove()
-
-    order = WorkOrder.query.get_or_404(id)
-    
-    # Find the open changeover event
-    open_event = DowntimeEvent.query.filter_by(work_order_id=order.id, end_time=None).first()
-    
-    if not open_event:
-        return jsonify({"message": "No active changeover found"}), 200
-        
-    open_event.end_time = datetime.now()
-    delta = open_event.end_time - open_event.start_time
-    open_event.duration_seconds = int(delta.total_seconds())
-    
-    db.session.commit()
-    
-    return jsonify({"message": "Changeover stopped", "duration": open_event.duration_seconds})
-
-# --- REPORTES ---
-
-@views_bp.route('/config/lines')
+@reports_bp.route('/config/lines')
 @login_required
 @admin_required
 def config_lines():
     return render_template('config_lines.html')
 
-@views_bp.route('/history')
+@reports_bp.route('/history')
 @login_required
 @admin_required
 def history():
@@ -415,7 +33,7 @@ def history():
                             .all()
     return render_template('history.html', orders=orders)
 
-@views_bp.route('/report/<int:id>')
+@reports_bp.route('/report/<int:id>')
 @login_required
 @admin_required
 def report_detail(id):
@@ -480,7 +98,7 @@ def report_detail(id):
             
     return render_template('report_detail.html', order=order, timeline=timeline)
 
-@views_bp.route('/reports')
+@reports_bp.route('/reports')
 @login_required
 @admin_required
 def reports():
@@ -550,7 +168,7 @@ def get_report_data_helper(orders):
         })
     return final_report
 
-@views_bp.route('/reports/export')
+@reports_bp.route('/reports/export')
 @login_required
 @admin_required
 def export_reports():
@@ -670,7 +288,7 @@ def export_reports():
 
 from app.services.time_sync import get_network_time
 
-@views_bp.route('/dashboard')
+@reports_bp.route('/dashboard')
 @login_required
 @admin_required
 def dashboard():
@@ -880,21 +498,9 @@ def dashboard():
                 else:
                     merged.append((curr_start, curr_end))
                     curr_start, curr_end = next_start, next_end
-        total_gross_seconds = sum((end - start).total_seconds() for start, end in merged)
-        
-        # Correctly subtract downtimes for the time actually spent in execution
-        total_downtime_seconds = 0
-        for o in all_orders:
-            for dt in o.downtime_events:
-                if dt.start_time:
-                    dt_s = dt.start_time
-                    dt_e = dt.end_time if dt.end_time else datetime.now()
-                    eff_dt_s = max(dt_s, start_date)
-                    eff_dt_e = min(dt_e, end_date)
-                    if eff_dt_e > eff_dt_s:
-                        total_downtime_seconds += (eff_dt_e - eff_dt_s).total_seconds()
-                        
-        total_run_time_seconds = max(0, total_gross_seconds - total_downtime_seconds)
+            merged.append((curr_start, curr_end))
+            
+        total_run_time_seconds = sum((end - start).total_seconds() for start, end in merged)
         
         # 4. Calculate Planned Time (Shift Hours * Days in Period)
         # Simple approximation: Count business days? Or just Days passed?
@@ -991,46 +597,3 @@ def dashboard():
                            date_names=date_names,
                            stats={})
 
-@views_bp.route('/general-analytics')
-@login_required
-def general_analytics():
-    # --- ANALÍTICA DE PRODUCCIÓN (GLOBAL ESTIMADA) ---
-    window_days = 30
-    last_30_days_date = datetime.now() - timedelta(days=window_days)
-    
-    orders_30d = WorkOrder.query.filter(
-        WorkOrder.status == WorkOrderStatus.FINISHED,
-        WorkOrder.end_time >= last_30_days_date
-    ).all()
-    
-    total_products = {} 
-    total_liters_30d = 0
-    category_stats = {'sodas': 0, 'bidones_10': 0, 'bidones_20': 0}
-
-    for o in orders_30d:
-        if o.product:
-            p_name = o.product.name
-            qty = o.total_produced or 0
-            name_lower = p_name.lower()
-            volume = 0
-            
-            if "soda" in name_lower or "sifon" in name_lower: 
-                volume = 1
-                category_stats['sodas'] += qty
-            elif "bidon" in name_lower or "botellon" in name_lower:
-                if "10" in name_lower:
-                    volume = 10
-                    category_stats['bidones_10'] += qty
-                else:
-                    volume = 20
-                    category_stats['bidones_20'] += qty
-            
-            total_liters_30d += (qty * volume)
-
-            if p_name not in total_products:
-                total_products[p_name] = 0
-            total_products[p_name] += qty
-
-    return render_template('general_analytics.html', 
-                           total_liters_30d=int(total_liters_30d), 
-                           category_stats=category_stats)
